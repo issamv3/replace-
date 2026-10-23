@@ -1,0 +1,6 @@
+{
+  "name": "TextShift",
+  "description": "Visual screen text replacer overlay using accessibility tree node inspection and automatic overlay matching.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">TextShift</string>
+    <string name="accessibility_service_label">TextShift Screen Text Overlayer</string>
+    <string name="accessibility_service_description">Reads screen text elements to allow on-screen visual text replacement and real-time rule overlays.</string>
+    <string name="channel_name">TextShift Overlay Service</string>
+    <string name="channel_description">Active floating text overlay notifications</string>
+    <string name="notification_title">TextShift is active</string>
+    <string name="notification_text">Floating icon and overlay engine are running</string>
+</resources>
