@@ -18,7 +18,7 @@ class AppPreferences(context: Context) {
     private val _ocrFallbackEnabled = MutableStateFlow(prefs.getBoolean(KEY_OCR_FALLBACK, false))
     val ocrFallbackEnabled: StateFlow<Boolean> = _ocrFallbackEnabled.asStateFlow()
 
-    private val _isAutoApplyActive = MutableStateFlow(prefs.getBoolean(KEY_AUTO_APPLY, false))
+    private val _isAutoApplyActive = MutableStateFlow(prefs.getBoolean(KEY_AUTO_APPLY, true))
     val isAutoApplyActive: StateFlow<Boolean> = _isAutoApplyActive.asStateFlow()
 
     private val _bubblePosX = MutableStateFlow(prefs.getInt(KEY_BUBBLE_POS_X, 0))

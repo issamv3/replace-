@@ -16,7 +16,8 @@ import kotlinx.coroutines.withContext
 
 /**
  * Real-time auto-apply engine. Traverses active accessibility tree, matches against
- * active rules, and updates overlay patches with debouncing.
+ * active rules, updates overlay patches as words scroll, and removes patches immediately
+ * when words disappear.
  */
 class AutoApplyEngine(
     private val service: AccessibilityService,
@@ -46,19 +47,23 @@ class AutoApplyEngine(
         if (!isRunning) return
 
         when (event.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-            AccessibilityEvent.TYPE_VIEW_SCROLLED,
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                // Immediate low-latency scan (20ms) so text follows smooth scrolling
+                scheduleScan(20L)
+            }
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                scheduleScan(preferences.debounceMs.value.coerceAtMost(50L))
+            }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
-                scheduleScan(preferences.debounceMs.value)
+                // Immediate scan on window change or app switch (if word is gone, clears immediately)
+                scheduleScan(0L)
             }
         }
     }
 
     fun triggerScan() {
-        if (isRunning) {
-            scheduleScan(0L)
-        }
+        scheduleScan(0L)
     }
 
     private fun scheduleScan(delayMs: Long) {
@@ -74,7 +79,9 @@ class AutoApplyEngine(
     private suspend fun performScan() {
         val activeRules = repository.getActiveRulesList()
         if (activeRules.isEmpty()) {
-            overlayContainerView.clearAll()
+            withContext(Dispatchers.Main) {
+                overlayContainerView.clearAll()
+            }
             return
         }
 
@@ -82,23 +89,34 @@ class AutoApplyEngine(
             service.rootInActiveWindow
         } catch (e: Exception) {
             null
-        } ?: return
+        }
+
+        if (rootNode == null) {
+            withContext(Dispatchers.Main) {
+                overlayContainerView.clearAll()
+            }
+            return
+        }
 
         val matchedPatches = mutableMapOf<String, ActiveTextPatch>()
-        val screenBounds = Rect()
+        val tempRect = Rect()
+        val displayMetrics = service.resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels
+        val screenHeight = displayMetrics.heightPixels
 
         try {
-            traverseNode(rootNode, activeRules, matchedPatches, screenBounds)
+            traverseNode(rootNode, activeRules, matchedPatches, tempRect, screenWidth, screenHeight, 0)
         } catch (e: Exception) {
             e.printStackTrace()
         } finally {
             try {
                 rootNode.recycle()
             } catch (e: Exception) {
-                // Node might already be recycled
+                // Ignore
             }
         }
 
+        // Apply newly matched patches. Any patch not in matchedPatches is removed automatically!
         withContext(Dispatchers.Main) {
             overlayContainerView.updatePatches(matchedPatches)
         }
@@ -108,7 +126,10 @@ class AutoApplyEngine(
         node: AccessibilityNodeInfo?,
         rules: List<ReplacementRule>,
         outPatches: MutableMap<String, ActiveTextPatch>,
-        tempRect: Rect
+        tempRect: Rect,
+        screenWidth: Int,
+        screenHeight: Int,
+        depth: Int
     ) {
         if (node == null) return
 
@@ -119,10 +140,13 @@ class AutoApplyEngine(
 
             if (!effectiveText.isNullOrBlank()) {
                 node.getBoundsInScreen(tempRect)
-                if (tempRect.width() > 0 && tempRect.height() > 0) {
+                // Only consider nodes actually visible on screen
+                if (tempRect.width() > 0 && tempRect.height() > 0 &&
+                    tempRect.intersects(0, 0, screenWidth, screenHeight)
+                ) {
                     val matchedRule = findMatchingRule(effectiveText, node, rules)
                     if (matchedRule != null) {
-                        val key = "rule_${matchedRule.id}_${tempRect.left}_${tempRect.top}"
+                        val key = "rule_${matchedRule.id}_${node.viewIdResourceName ?: effectiveText}_$depth"
                         outPatches[key] = ActiveTextPatch(
                             key = key,
                             bounds = Rect(tempRect),
@@ -146,7 +170,7 @@ class AutoApplyEngine(
                 null
             }
             if (child != null) {
-                traverseNode(child, rules, outPatches, tempRect)
+                traverseNode(child, rules, outPatches, tempRect, screenWidth, screenHeight, depth + 1)
                 try {
                     child.recycle()
                 } catch (e: Exception) {
@@ -164,7 +188,7 @@ class AutoApplyEngine(
         val nodePackage = node.packageName?.toString()
         val nodeViewId = node.viewIdResourceName
 
-        // Priority 1: Exact text match (package filtered or global)
+        // Priority 1: Exact text match
         for (rule in rules) {
             if (rule.matchMode == ReplacementRule.MATCH_EXACT) {
                 if (rule.packageName != null && rule.packageName != nodePackage) continue

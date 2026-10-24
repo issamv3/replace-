@@ -60,10 +60,8 @@ class TextReplacerAccessibilityService : AccessibilityService() {
         setupOverlayViews()
 
         autoApplyEngine = AutoApplyEngine(this, repository, preferences, overlayContainerView!!)
-        if (preferences.isAutoApplyActive.value) {
-            autoApplyEngine?.start()
-            floatingBubbleView?.updatePlayState(true)
-        }
+        autoApplyEngine?.start()
+        floatingBubbleView?.updatePlayState(true)
     }
 
     private fun setupOverlayViews() {
@@ -149,13 +147,16 @@ class TextReplacerAccessibilityService : AccessibilityService() {
             if (!effectiveText.isNullOrBlank()) {
                 node.getBoundsInScreen(tempRect)
                 if (tempRect.width() > 0 && tempRect.height() > 0) {
+                    val density = resources.displayMetrics.density
+                    val calculatedSizeSp = (tempRect.height() * 0.70f) / density
                     outItems.add(
                         InspectableItem(
                             text = effectiveText,
                             bounds = Rect(tempRect),
                             packageName = node.packageName?.toString(),
                             viewId = node.viewIdResourceName,
-                            className = node.className?.toString()
+                            className = node.className?.toString(),
+                            textSizeSp = calculatedSizeSp
                         )
                     )
                 }
@@ -258,23 +259,15 @@ class TextReplacerAccessibilityService : AccessibilityService() {
     private fun applyAndSaveRule(rule: ReplacementRule) {
         serviceScope.launch {
             // 1. Save rule to Room database
-            val ruleId = repository.insertRule(rule)
+            repository.insertRule(rule)
 
-            // 2. Immediately render patch over the original text
-            val patch = ActiveTextPatch(
-                key = "manual_${ruleId}_${rule.boundsLeft}_${rule.boundsTop}",
-                bounds = Rect(rule.boundsLeft, rule.boundsTop, rule.boundsRight, rule.boundsBottom),
-                replacementText = rule.replacementText,
-                textColor = rule.textColor,
-                backgroundColor = rule.backgroundColor,
-                textSizeSp = rule.textSizeSp,
-                isBold = rule.isBold,
-                isItalic = rule.isItalic
-            )
-            overlayContainerView?.addOrUpdatePatch(patch)
-
-            // 3. Trigger auto-apply engine update if running
-            autoApplyEngine?.triggerScan()
+            // 2. Trigger autoApplyEngine to scan live tree and track node dynamically
+            if (autoApplyEngine?.isRunning != true) {
+                autoApplyEngine?.start()
+                floatingBubbleView?.updatePlayState(true)
+            } else {
+                autoApplyEngine?.triggerScan()
+            }
         }
     }
 

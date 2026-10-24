@@ -11,7 +11,6 @@ import android.os.Build
 import android.view.View
 import android.view.WindowManager
 import kotlin.math.max
-import kotlin.math.min
 
 data class ActiveTextPatch(
     val key: String,
@@ -19,15 +18,15 @@ data class ActiveTextPatch(
     val replacementText: String,
     val textColor: Int,
     val backgroundColor: Int,
-    val textSizeSp: Float,
+    val textSizeSp: Float = 0f,
     val isBold: Boolean = false,
     val isItalic: Boolean = false
 )
 
 /**
- * High-performance full-screen non-touchable overlay canvas that renders all active text patches.
- * It erases original text by drawing the sampled background color, and renders replacement text
- * auto-fitted directly inside the exact node bounds.
+ * High-performance full-screen non-touchable overlay canvas that renders active text patches.
+ * It dynamically tracks on-screen text nodes, erases original text using the sampled background color,
+ * and renders replacement text with the exact font size and alignment of the original word.
  */
 class TextOverlayContainerView(
     context: Context,
@@ -41,9 +40,7 @@ class TextOverlayContainerView(
         style = Paint.Style.FILL
     }
 
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textAlign = Paint.Align.CENTER
-    }
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     val layoutParamsWindow: WindowManager.LayoutParams
 
@@ -75,20 +72,6 @@ class TextOverlayContainerView(
         }
     }
 
-    fun addOrUpdatePatch(patch: ActiveTextPatch) {
-        post {
-            patches[patch.key] = patch
-            invalidate()
-        }
-    }
-
-    fun removePatch(key: String) {
-        post {
-            patches.remove(key)
-            invalidate()
-        }
-    }
-
     fun clearAll() {
         post {
             patches.clear()
@@ -108,7 +91,7 @@ class TextOverlayContainerView(
             bgPaint.color = patch.backgroundColor
             canvas.drawRect(bounds, bgPaint)
 
-            // 2. Render replacement text
+            // 2. Configure font style
             textPaint.color = patch.textColor
             val typefaceStyle = when {
                 patch.isBold && patch.isItalic -> Typeface.BOLD_ITALIC
@@ -118,27 +101,34 @@ class TextOverlayContainerView(
             }
             textPaint.typeface = Typeface.create(Typeface.DEFAULT, typefaceStyle)
 
-            // Calculate auto-fitting font size so text never clips outside node bounds
-            val baseTextSize = if (patch.textSizeSp > 0) patch.textSizeSp * density else bounds.height() * 0.65f
-            var calculatedSize = baseTextSize
-            textPaint.textSize = calculatedSize
+            // 3. Exact font size matching the original word:
+            // Standard single-line UI text font size is 72% of the bounding box height
+            val targetSizePx = (bounds.height() * 0.72f).coerceAtLeast(8f * density)
+            textPaint.textSize = targetSizePx
 
-            val availableWidth = max(10f, bounds.width() - 8f * density)
+            // Auto-scale width only if replacement text is longer than the original box
+            val availableWidth = max(10f, bounds.width() - 4f * density)
             val measuredWidth = textPaint.measureText(patch.replacementText)
-
             if (measuredWidth > availableWidth && measuredWidth > 0) {
                 val scale = availableWidth / measuredWidth
-                calculatedSize = max(8f * density, baseTextSize * scale)
-                textPaint.textSize = calculatedSize
+                textPaint.textSize = max(8f * density, targetSizePx * scale)
             }
 
-            // Vertical centering calculation
+            // Vertical centering calculation within bounds
             val fontMetrics = textPaint.fontMetrics
-            val textHeight = fontMetrics.descent - fontMetrics.ascent
             val centerY = bounds.centerY() - (fontMetrics.ascent + fontMetrics.descent) / 2f
-            val centerX = bounds.centerX().toFloat()
 
-            canvas.drawText(patch.replacementText, centerX, centerY, textPaint)
+            // Alignment: if box is wide (left-aligned text), align left with padding; otherwise center
+            val currentTextWidth = textPaint.measureText(patch.replacementText)
+            if (availableWidth > currentTextWidth * 1.35f) {
+                textPaint.textAlign = Paint.Align.LEFT
+                val startX = bounds.left + 4f * density
+                canvas.drawText(patch.replacementText, startX, centerY, textPaint)
+            } else {
+                textPaint.textAlign = Paint.Align.CENTER
+                val centerX = bounds.centerX().toFloat()
+                canvas.drawText(patch.replacementText, centerX, centerY, textPaint)
+            }
         }
     }
 }

@@ -15,11 +15,11 @@ import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.example.data.AppPreferences
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 @SuppressLint("ViewConstructor")
@@ -32,6 +32,7 @@ class FloatingBubbleView(
 ) : FrameLayout(context) {
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val density = context.resources.displayMetrics.density
     private var initialX = 0
     private var initialY = 0
     private var initialTouchX = 0f
@@ -39,12 +40,16 @@ class FloatingBubbleView(
     private var isDragging = false
     private var isExpanded = false
 
+    private val rootRow: LinearLayout
     private val bubbleContainer: FrameLayout
-    private val bubbleIcon: ImageView
+    private val bubbleText: TextView
     private val menuContainer: LinearLayout
     private val btnAdd: FrameLayout
     private val btnPlay: FrameLayout
     private val playIconText: TextView
+
+    private val bubbleSizePx: Int
+        get() = (preferences.bubbleSizeDp.value * density).roundToInt()
 
     val layoutParamsWindow: WindowManager.LayoutParams
 
@@ -69,55 +74,54 @@ class FloatingBubbleView(
             y = preferences.bubblePosY.value
         }
 
-        val density = context.resources.displayMetrics.density
-        val bubbleSizePx = (preferences.bubbleSizeDp.value * density).roundToInt()
-
-        // Root container
         clipChildren = false
         clipToPadding = false
 
-        val rootRow = LinearLayout(context).apply {
+        rootRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             clipChildren = false
+            clipToPadding = false
         }
 
-        // Main Bubble
+        // Main Bubble - distinctive swap symbol (⇄) instead of generic pencil
+        val currentSize = bubbleSizePx
         bubbleContainer = FrameLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(bubbleSizePx, bubbleSizePx)
+            layoutParams = LinearLayout.LayoutParams(currentSize, currentSize)
             background = createBubbleBackground(0xFF0F172A.toInt(), 0xFF38BDF8.toInt())
             elevation = 16f * density
         }
 
-        bubbleIcon = ImageView(context).apply {
-            val iconPadding = (bubbleSizePx * 0.22f).roundToInt()
-            setPadding(iconPadding, iconPadding, iconPadding, iconPadding)
-            setImageResource(android.R.drawable.ic_menu_edit)
-            setColorFilter(0xFFF8FAFC.toInt())
+        bubbleText = TextView(context).apply {
+            text = "⇄"
+            textSize = 22f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         }
-        bubbleContainer.addView(bubbleIcon)
+        bubbleContainer.addView(bubbleText)
 
-        // Expandable Menu
+        // Expandable Menu container
         menuContainer = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             visibility = View.GONE
             val margin = (8 * density).roundToInt()
             setPadding(margin, 0, margin, 0)
+            clipChildren = false
         }
 
         // "+" Add Replacement Button
-        val actionBtnSize = (bubbleSizePx * 0.88f).roundToInt()
+        val actionBtnSize = (currentSize * 0.88f).roundToInt()
         btnAdd = FrameLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(actionBtnSize, actionBtnSize).apply {
                 marginEnd = (6 * density).roundToInt()
             }
             background = createBubbleBackground(0xFF0284C7.toInt(), 0xFF7DD3FC.toInt())
-            elevation = 12f * density
+            elevation = 14f * density
             val addText = TextView(context).apply {
                 text = "+"
                 textSize = 24f
@@ -135,11 +139,11 @@ class FloatingBubbleView(
             }
         }
 
-        // "▶" Play / Apply Button
+        // "▶" / "⏸" Play / Pause Button
         btnPlay = FrameLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(actionBtnSize, actionBtnSize)
             background = createBubbleBackground(0xFF10B981.toInt(), 0xFF6EE7B7.toInt())
-            elevation = 12f * density
+            elevation = 14f * density
             playIconText = TextView(context).apply {
                 text = if (preferences.isAutoApplyActive.value) "⏸" else "▶"
                 textSize = 18f
@@ -160,12 +164,27 @@ class FloatingBubbleView(
         menuContainer.addView(btnAdd)
         menuContainer.addView(btnPlay)
 
-        rootRow.addView(bubbleContainer)
-        rootRow.addView(menuContainer)
+        // Initial setup depending on whether bubble was saved on left or right edge
+        val screenWidth = getScreenWidth()
+        if (layoutParamsWindow.x + currentSize / 2 >= screenWidth / 2) {
+            rootRow.addView(menuContainer)
+            rootRow.addView(bubbleContainer)
+        } else {
+            rootRow.addView(bubbleContainer)
+            rootRow.addView(menuContainer)
+        }
+
         addView(rootRow)
 
         applyOpacity(preferences.bubbleOpacity.value)
         setupTouchListener()
+    }
+
+    private fun getScreenWidth(): Int {
+        val displayMetrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        windowManager.defaultDisplay.getRealMetrics(displayMetrics)
+        return displayMetrics.widthPixels
     }
 
     fun updatePlayState(isPlaying: Boolean) {
@@ -183,7 +202,6 @@ class FloatingBubbleView(
     }
 
     private fun createBubbleBackground(color: Int, strokeColor: Int): GradientDrawable {
-        val density = context.resources.displayMetrics.density
         return GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(color)
@@ -252,34 +270,82 @@ class FloatingBubbleView(
 
     private fun expandMenu() {
         isExpanded = true
-        menuContainer.visibility = View.VISIBLE
         bubbleContainer.alpha = 1.0f
         updatePlayState(preferences.isAutoApplyActive.value)
+
+        val screenWidth = getScreenWidth()
+        val currentSize = bubbleSizePx
+        val isOnRight = (layoutParamsWindow.x + currentSize / 2) >= screenWidth / 2
+
+        rootRow.removeAllViews()
+        menuContainer.visibility = View.VISIBLE
+
+        if (isOnRight) {
+            // Put menu on the LEFT of bubble so buttons appear on screen!
+            rootRow.addView(menuContainer)
+            rootRow.addView(bubbleContainer)
+
+            // Measure menu to position the window properly on the right
+            menuContainer.measure(
+                MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
+                MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+            )
+            val menuWidth = menuContainer.measuredWidth
+            val totalWidth = menuWidth + currentSize + (16 * density).roundToInt()
+            layoutParamsWindow.x = max(8, screenWidth - totalWidth)
+        } else {
+            // Put menu on the RIGHT of bubble
+            rootRow.addView(bubbleContainer)
+            rootRow.addView(menuContainer)
+            layoutParamsWindow.x = (16 * density).roundToInt()
+        }
+
+        try {
+            windowManager.updateViewLayout(this, layoutParamsWindow)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     fun collapseMenu() {
         if (!isExpanded) return
         isExpanded = false
         menuContainer.visibility = View.GONE
+
+        val screenWidth = getScreenWidth()
+        val currentSize = bubbleSizePx
+        val isOnRight = (layoutParamsWindow.x + currentSize / 2) >= screenWidth / 2
+        val margin = (16 * density).roundToInt()
+
+        if (isOnRight) {
+            layoutParamsWindow.x = screenWidth - currentSize - margin
+        } else {
+            layoutParamsWindow.x = margin
+        }
+
+        try {
+            windowManager.updateViewLayout(this, layoutParamsWindow)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         applyOpacity(preferences.bubbleOpacity.value)
     }
 
     private fun snapToEdge() {
-        val displayMetrics = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        windowManager.defaultDisplay.getRealMetrics(displayMetrics)
-        val screenWidth = displayMetrics.widthPixels
-        val viewWidth = bubbleContainer.width.coerceAtLeast(100)
+        val screenWidth = getScreenWidth()
+        val currentSize = bubbleSizePx
+        val margin = (16 * density).roundToInt()
 
-        val targetX = if (layoutParamsWindow.x + viewWidth / 2 < screenWidth / 2) {
-            16 // Snap to left
+        val isSnapRight = (layoutParamsWindow.x + currentSize / 2) >= screenWidth / 2
+        val targetX = if (isSnapRight) {
+            screenWidth - currentSize - margin
         } else {
-            screenWidth - viewWidth - 16 // Snap to right
+            margin
         }
 
         val startX = layoutParamsWindow.x
         val animator = ValueAnimator.ofInt(startX, targetX)
-        animator.duration = 250
+        animator.duration = 200
         animator.interpolator = DecelerateInterpolator()
         animator.addUpdateListener { anim ->
             layoutParamsWindow.x = anim.animatedValue as Int
