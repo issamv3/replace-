@@ -30,6 +30,12 @@ class AppPreferences(context: Context) {
     private val _debounceMs = MutableStateFlow(prefs.getLong(KEY_DEBOUNCE_MS, 120L))
     val debounceMs: StateFlow<Long> = _debounceMs.asStateFlow()
 
+    private val _isBubbleHidden = MutableStateFlow(prefs.getBoolean(KEY_BUBBLE_HIDDEN, false))
+    val isBubbleHidden: StateFlow<Boolean> = _isBubbleHidden.asStateFlow()
+
+    private val _hotspotPosition = MutableStateFlow(prefs.getString(KEY_HOTSPOT_POSITION, HOTSPOT_TOP_RIGHT) ?: HOTSPOT_TOP_RIGHT)
+    val hotspotPosition: StateFlow<String> = _hotspotPosition.asStateFlow()
+
     fun setBubbleOpacity(value: Float) {
         val clamped = value.coerceIn(0.2f, 1.0f)
         prefs.edit().putFloat(KEY_BUBBLE_OPACITY, clamped).apply()
@@ -63,6 +69,16 @@ class AppPreferences(context: Context) {
         _debounceMs.value = ms
     }
 
+    fun setBubbleHidden(hidden: Boolean) {
+        prefs.edit().putBoolean(KEY_BUBBLE_HIDDEN, hidden).apply()
+        _isBubbleHidden.value = hidden
+    }
+
+    fun setHotspotPosition(pos: String) {
+        prefs.edit().putString(KEY_HOTSPOT_POSITION, pos).apply()
+        _hotspotPosition.value = pos
+    }
+
     companion object {
         private const val KEY_BUBBLE_OPACITY = "bubble_opacity"
         private const val KEY_BUBBLE_SIZE_DP = "bubble_size_dp"
@@ -71,6 +87,13 @@ class AppPreferences(context: Context) {
         private const val KEY_BUBBLE_POS_X = "bubble_pos_x"
         private const val KEY_BUBBLE_POS_Y = "bubble_pos_y"
         private const val KEY_DEBOUNCE_MS = "debounce_ms"
+        private const val KEY_BUBBLE_HIDDEN = "bubble_hidden"
+        private const val KEY_HOTSPOT_POSITION = "hotspot_position"
+
+        const val HOTSPOT_TOP_RIGHT = "TOP_RIGHT"
+        const val HOTSPOT_TOP_LEFT = "TOP_LEFT"
+        const val HOTSPOT_BOTTOM_RIGHT = "BOTTOM_RIGHT"
+        const val HOTSPOT_BOTTOM_LEFT = "BOTTOM_LEFT"
 
         @Volatile
         private var INSTANCE: AppPreferences? = null

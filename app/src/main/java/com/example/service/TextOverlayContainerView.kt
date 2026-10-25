@@ -19,14 +19,17 @@ data class ActiveTextPatch(
     val textColor: Int,
     val backgroundColor: Int,
     val textSizeSp: Float = 0f,
+    val widthScale: Float = 1.0f,
     val isBold: Boolean = false,
-    val isItalic: Boolean = false
+    val isItalic: Boolean = false,
+    val hasRealText: Boolean = true,
+    val className: String? = null
 )
 
 /**
  * High-performance full-screen non-touchable overlay canvas that renders active text patches.
- * It dynamically tracks on-screen text nodes, erases original text using the sampled background color,
- * and renders replacement text with the exact font size and alignment of the original word.
+ * It dynamically tracks on-screen text nodes with zero lag, erases original text using the
+ * sampled background color, and renders replacement text with exact font size, colors, and width scaling.
  */
 class TextOverlayContainerView(
     context: Context,
@@ -41,6 +44,7 @@ class TextOverlayContainerView(
     }
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val drawBounds = Rect()
 
     val layoutParamsWindow: WindowManager.LayoutParams
 
@@ -96,7 +100,8 @@ class TextOverlayContainerView(
 
             // 1. Fill over original text using sampled background color (erases it completely)
             bgPaint.color = patch.backgroundColor
-            canvas.drawRect(bounds, bgPaint)
+            drawBounds.set(bounds)
+            canvas.drawRect(drawBounds, bgPaint)
 
             // 2. Configure font style
             textPaint.color = patch.textColor
@@ -108,17 +113,19 @@ class TextOverlayContainerView(
             }
             textPaint.typeface = Typeface.create(Typeface.DEFAULT, typefaceStyle)
 
-            // 3. Exact font size matching the original word:
-            // Standard single-line UI text font size is 72% of the bounding box height
-            val targetSizePx = (bounds.height() * 0.72f).coerceAtLeast(8f * density)
+            // 3. User-controlled text width scale (from rule settings):
+            textPaint.textScaleX = patch.widthScale.coerceIn(0.3f, 3.0f)
+
+            // 4. Exact font size matching original text height:
+            val targetSizePx = (bounds.height() * 0.72f).coerceAtLeast(6f * density)
             textPaint.textSize = targetSizePx
 
-            // Auto-scale width only if replacement text is longer than the original box
-            val availableWidth = max(10f, bounds.width() - 4f * density)
+            // If user did not customize widthScale (widthScale == 1.0f), auto-fit if replacement is longer
+            val availableWidth = max(6f, bounds.width() - 4f * density)
             val measuredWidth = textPaint.measureText(patch.replacementText)
-            if (measuredWidth > availableWidth && measuredWidth > 0) {
+            if (patch.widthScale == 1.0f && measuredWidth > availableWidth && measuredWidth > 0) {
                 val scale = availableWidth / measuredWidth
-                textPaint.textSize = max(8f * density, targetSizePx * scale)
+                textPaint.textSize = max(6f * density, targetSizePx * scale)
             }
 
             // Vertical centering calculation within bounds

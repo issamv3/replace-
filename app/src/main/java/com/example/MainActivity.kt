@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import com.example.service.TextReplacerAccessibilityService
 import com.example.ui.MainScreen
 import com.example.ui.MainViewModel
 import com.example.ui.theme.MyApplicationTheme
@@ -26,5 +27,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshPermissions()
+        // Automatically restore floating icon when entering the app
+        TextReplacerAccessibilityService.restoreBubble()
     }
 }

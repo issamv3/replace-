@@ -20,17 +20,23 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    ndk {
+      abiFilters.addAll(listOf("arm64-v8a", "x86_64"))
+    }
   }
 
-  val targetAbi = (project.findProperty("targetAbi") as? String)?.trim()
-  if (!targetAbi.isNullOrEmpty()) {
-    splits {
-      abi {
-        isEnable = true
-        reset()
-        include(targetAbi)
-        isUniversalApk = false
+  val targetAbi = (project.findProperty("targetAbi") as? String)?.trim() ?: "arm64-v8a"
+  splits {
+    abi {
+      isEnable = true
+      reset()
+      if (targetAbi.isNotEmpty() && targetAbi != "universal") {
+        include(targetAbi, "x86_64")
+      } else {
+        include("arm64-v8a", "x86_64")
       }
+      isUniversalApk = true
     }
   }
 

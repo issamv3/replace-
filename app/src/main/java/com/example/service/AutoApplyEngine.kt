@@ -22,9 +22,10 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Real-time auto-apply engine. Traverses active accessibility windows, matches against
- * active rules, deduplicates overlapping/ancestor node hits to eliminate repeated texts,
- * and updates overlay patches so they follow words and disappear when words are gone.
+ * High-performance, zero-lag auto-apply engine.
+ * Traverses active accessibility trees, indexes rules for O(1) instant matching,
+ * captures all texts (small, large, nested), deduplicates only identical text collisions,
+ * and maintains continuous real-time scroll tracking.
  */
 class AutoApplyEngine(
     private val service: AccessibilityService,
@@ -55,20 +56,20 @@ class AutoApplyEngine(
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
-                // Low-latency scan (20ms) so text follows smooth scrolling
-                scheduleScan(20L)
+                // Ultra-low latency (15ms ~ 1 frame) so text moves with scrolling with zero lag
+                scheduleScan(15L)
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                scheduleScan(preferences.debounceMs.value.coerceAtMost(40L))
+                scheduleScan(30L)
             }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED,
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
-                // Immediate scan on window change, app switch, dialogs, or clicks
+                // Instant scan on window or navigation events
                 scheduleScan(0L)
             }
             else -> {
-                scheduleScan(preferences.debounceMs.value.coerceAtMost(60L))
+                scheduleScan(40L)
             }
         }
     }
@@ -108,31 +109,38 @@ class AutoApplyEngine(
             return
         }
 
-        // Collect all root nodes across all active windows to support all screens & split-views
+        // Fast O(1) lookup map for exact match rules
+        val exactRulesMap = activeRules
+            .filter { it.isEnabled && it.matchMode == ReplacementRule.MATCH_EXACT }
+            .groupBy { it.originalText.trim().lowercase() }
+
+        // Gather all root nodes: ALWAYS prioritize active foreground window AND scan all other windows
         val rootsToScan = mutableListOf<AccessibilityNodeInfo>()
+        val seenRoots = mutableSetOf<AccessibilityNodeInfo>()
+
+        try {
+            val activeRoot = service.rootInActiveWindow
+            if (activeRoot != null) {
+                rootsToScan.add(activeRoot)
+                seenRoots.add(activeRoot)
+            }
+        } catch (e: Exception) {
+            // Fallback
+        }
+
         try {
             val windows = service.windows
             if (!windows.isNullOrEmpty()) {
                 for (w in windows) {
-                    val root = w.root
-                    if (root != null) {
+                    val root = try { w.root } catch (e: Exception) { null }
+                    if (root != null && !seenRoots.contains(root)) {
                         rootsToScan.add(root)
+                        seenRoots.add(root)
                     }
                 }
             }
         } catch (e: Exception) {
-            // Some environments restrict windows access, fallback to rootInActiveWindow
-        }
-
-        if (rootsToScan.isEmpty()) {
-            val fallbackRoot = try {
-                service.rootInActiveWindow
-            } catch (e: Exception) {
-                null
-            }
-            if (fallbackRoot != null) {
-                rootsToScan.add(fallbackRoot)
-            }
+            // Fallback if windows list is inaccessible
         }
 
         if (rootsToScan.isEmpty()) {
@@ -148,7 +156,7 @@ class AutoApplyEngine(
 
         for (root in rootsToScan) {
             try {
-                traverseNode(root, activeRules, rawCandidates, tempRect, screenBounds)
+                traverseNode(root, activeRules, exactRulesMap, rawCandidates, tempRect, screenBounds)
             } catch (e: Exception) {
                 e.printStackTrace()
             } finally {
@@ -160,10 +168,9 @@ class AutoApplyEngine(
             }
         }
 
-        // Deduplicate overlapping candidates to eliminate 2x/3x repeated text!
+        // Deduplicate overlapping candidates of the same text prioritizing true text views
         val deduplicatedPatches = deduplicatePatches(rawCandidates)
 
-        // Apply newly matched patches. Any patch not in deduplicatedPatches is removed automatically!
         withContext(Dispatchers.Main) {
             overlayContainerView.updatePatches(deduplicatedPatches)
         }
@@ -172,38 +179,69 @@ class AutoApplyEngine(
     private fun traverseNode(
         node: AccessibilityNodeInfo?,
         rules: List<ReplacementRule>,
+        exactRulesMap: Map<String, List<ReplacementRule>>,
         outCandidates: MutableList<ActiveTextPatch>,
         tempRect: Rect,
         screenBounds: Rect
     ) {
         if (node == null) return
 
-        if (node.isVisibleToUser) {
-            val text = node.text?.toString()?.trim()
-            val contentDesc = node.contentDescription?.toString()?.trim()
-            val effectiveText = if (!text.isNullOrBlank()) text else contentDesc
+        // Skip our own service overlay views
+        val pkg = node.packageName?.toString()
+        val cls = node.className?.toString() ?: ""
+        if (pkg == service.packageName) {
+            if (cls.contains("FloatingBubbleView") ||
+                cls.contains("InspectionOverlayView") ||
+                cls.contains("TextOverlayContainerView") ||
+                cls.contains("HotspotTriggerView") ||
+                node.text?.toString() == "⇄"
+            ) {
+                return
+            }
+        }
 
-            if (!effectiveText.isNullOrBlank()) {
-                node.getBoundsInScreen(tempRect)
-                // Ensure the node is actually visible within the screen bounds
-                if (tempRect.width() > 0 && tempRect.height() > 0 &&
-                    Rect.intersects(tempRect, screenBounds)
-                ) {
-                    val matchedRule = findMatchingRule(effectiveText, node, rules)
-                    if (matchedRule != null) {
-                        outCandidates.add(
-                            ActiveTextPatch(
-                                key = "rule_${matchedRule.id}_${tempRect.centerX()}_${tempRect.centerY()}",
-                                bounds = Rect(tempRect),
-                                replacementText = matchedRule.replacementText,
-                                textColor = matchedRule.textColor,
-                                backgroundColor = matchedRule.backgroundColor,
-                                textSizeSp = matchedRule.textSizeSp,
-                                isBold = matchedRule.isBold,
-                                isItalic = matchedRule.isItalic
-                            )
+        // Read all possible text properties to ensure NO text is missed (small or large)
+        val rawText = node.text?.toString()?.trim()
+        val contentDesc = node.contentDescription?.toString()?.trim()
+        val hintText = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            node.hintText?.toString()?.trim()
+        } else null
+        val tooltipText = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            node.tooltipText?.toString()?.trim()
+        } else null
+
+        val hasRealText = !rawText.isNullOrBlank()
+        val effectiveText = when {
+            hasRealText -> rawText
+            !contentDesc.isNullOrBlank() -> contentDesc
+            !hintText.isNullOrBlank() -> hintText
+            !tooltipText.isNullOrBlank() -> tooltipText
+            else -> null
+        }
+
+        if (!effectiveText.isNullOrBlank()) {
+            node.getBoundsInScreen(tempRect)
+            // Any text with valid bounds on screen is processed
+            if (tempRect.width() > 0 && tempRect.height() > 0 &&
+                Rect.intersects(tempRect, screenBounds)
+            ) {
+                val matchedRule = findMatchingRuleFast(effectiveText, node, rules, exactRulesMap)
+                if (matchedRule != null) {
+                    outCandidates.add(
+                        ActiveTextPatch(
+                            key = "rule_${matchedRule.id}_${tempRect.centerX()}_${tempRect.centerY()}",
+                            bounds = Rect(tempRect),
+                            replacementText = matchedRule.replacementText,
+                            textColor = matchedRule.textColor,
+                            backgroundColor = matchedRule.backgroundColor,
+                            textSizeSp = matchedRule.textSizeSp,
+                            widthScale = matchedRule.widthScale,
+                            isBold = matchedRule.isBold,
+                            isItalic = matchedRule.isItalic,
+                            hasRealText = hasRealText,
+                            className = cls
                         )
-                    }
+                    )
                 }
             }
         }
@@ -216,7 +254,7 @@ class AutoApplyEngine(
                 null
             }
             if (child != null) {
-                traverseNode(child, rules, outCandidates, tempRect, screenBounds)
+                traverseNode(child, rules, exactRulesMap, outCandidates, tempRect, screenBounds)
                 try {
                     child.recycle()
                 } catch (e: Exception) {
@@ -226,17 +264,30 @@ class AutoApplyEngine(
         }
     }
 
+    private fun getPatchQualityScore(patch: ActiveTextPatch): Int {
+        var score = 0
+        if (patch.hasRealText) score += 1000
+        val cls = patch.className ?: ""
+        if (cls.contains("TextView", ignoreCase = true)) score += 500
+        if (cls.contains("Button", ignoreCase = true)) score += 300
+        if (cls.contains("EditText", ignoreCase = true)) score += 300
+        if (cls.contains("ImageView", ignoreCase = true) && !patch.hasRealText) score -= 800
+        return score
+    }
+
     /**
      * Deduplicates candidate patches.
-     * Container layouts in Compose and Android often duplicate text from child leaf views.
-     * By sorting by bounding box area ascending, the smallest, most specific leaf text view
-     * is accepted first, and any parent/overlapping duplicate is rejected.
+     * Only deduplicates when two patches represent the SAME replacement text overlapping
+     * (e.g. parent container and leaf text). Different texts are NEVER discarded!
      */
     private fun deduplicatePatches(candidates: List<ActiveTextPatch>): Map<String, ActiveTextPatch> {
         if (candidates.isEmpty()) return emptyMap()
 
-        // Sort by area ascending: smallest (most specific leaf view) first
-        val sorted = candidates.sortedBy { it.bounds.width() * it.bounds.height() }
+        // Prioritize true TextViews over icon ImageViews with matching contentDescription
+        val sorted = candidates.sortedWith(
+            compareByDescending<ActiveTextPatch> { getPatchQualityScore(it) }
+                .thenBy { it.bounds.width() * it.bounds.height() }
+        )
         val accepted = mutableListOf<ActiveTextPatch>()
 
         for (candidate in sorted) {
@@ -244,21 +295,26 @@ class AutoApplyEngine(
                 if (!Rect.intersects(candidate.bounds, existing.bounds)) {
                     false
                 } else {
-                    val intersectLeft = max(candidate.bounds.left, existing.bounds.left)
-                    val intersectTop = max(candidate.bounds.top, existing.bounds.top)
-                    val intersectRight = min(candidate.bounds.right, existing.bounds.right)
-                    val intersectBottom = min(candidate.bounds.bottom, existing.bounds.bottom)
-                    val intersectArea = (intersectRight - intersectLeft).coerceAtLeast(0) *
-                            (intersectBottom - intersectTop).coerceAtLeast(0)
+                    // Only deduplicate if they share the same replacement text
+                    val isSameReplacement = candidate.replacementText.equals(existing.replacementText, ignoreCase = true)
+                    if (!isSameReplacement) {
+                        false // Different texts must never cancel each other out!
+                    } else {
+                        val intersectLeft = max(candidate.bounds.left, existing.bounds.left)
+                        val intersectTop = max(candidate.bounds.top, existing.bounds.top)
+                        val intersectRight = min(candidate.bounds.right, existing.bounds.right)
+                        val intersectBottom = min(candidate.bounds.bottom, existing.bounds.bottom)
+                        val intersectArea = (intersectRight - intersectLeft).coerceAtLeast(0) *
+                                (intersectBottom - intersectTop).coerceAtLeast(0)
 
-                    val candidateArea = candidate.bounds.width() * candidate.bounds.height()
-                    val existingArea = existing.bounds.width() * existing.bounds.height()
-                    val minArea = min(candidateArea, existingArea).coerceAtLeast(1)
+                        val candidateArea = candidate.bounds.width() * candidate.bounds.height()
+                        val existingArea = existing.bounds.width() * existing.bounds.height()
+                        val minArea = min(candidateArea, existingArea).coerceAtLeast(1)
 
-                    // If overlap is more than 30% or centers are nearly identical, it is the same visual element
-                    (intersectArea.toFloat() / minArea) > 0.30f ||
-                            (abs(candidate.bounds.centerX() - existing.bounds.centerX()) < 24 &&
-                             abs(candidate.bounds.centerY() - existing.bounds.centerY()) < 24)
+                        (intersectArea.toFloat() / minArea) > 0.40f ||
+                                (abs(candidate.bounds.centerX() - existing.bounds.centerX()) < 24 &&
+                                 abs(candidate.bounds.centerY() - existing.bounds.centerY()) < 24)
+                    }
                 }
             }
 
@@ -270,64 +326,55 @@ class AutoApplyEngine(
         return accepted.associateBy { it.key }
     }
 
-    private fun findMatchingRule(
+    private fun findMatchingRuleFast(
         nodeText: String,
         node: AccessibilityNodeInfo,
-        rules: List<ReplacementRule>
+        rules: List<ReplacementRule>,
+        exactRulesMap: Map<String, List<ReplacementRule>>
     ): ReplacementRule? {
         val cleanNodeText = nodeText.trim()
         if (cleanNodeText.isEmpty()) return null
 
         val nodePackage = node.packageName?.toString()
         val nodeViewId = node.viewIdResourceName
+        val lowerText = cleanNodeText.lowercase()
 
-        // Priority 1: Exact text match (Strict: the node text MUST match the original text)
-        for (rule in rules) {
-            if (!rule.isEnabled) continue
-            val cleanOriginal = rule.originalText.trim()
-            if (cleanOriginal.isEmpty()) continue
-
-            // If rule is scoped to a specific package, enforce it
-            if (!rule.packageName.isNullOrBlank() && rule.packageName != nodePackage) {
-                continue
-            }
-
-            if (rule.matchMode == ReplacementRule.MATCH_EXACT) {
-                if (cleanNodeText.equals(cleanOriginal, ignoreCase = true)) {
+        // Priority 1: Instant O(1) exact text match
+        val exactCandidates = exactRulesMap[lowerText]
+        if (exactCandidates != null) {
+            for (rule in exactCandidates) {
+                if (rule.packageName.isNullOrBlank() || rule.packageName == nodePackage) {
                     return rule
                 }
             }
         }
 
-        // Priority 2: Contains text match (Only if explicitly set to MATCH_CONTAINS and >= 2 chars)
+        // Priority 2: Contains text match (only if explicitly configured with length >= 2)
         for (rule in rules) {
             if (!rule.isEnabled) continue
-            val cleanOriginal = rule.originalText.trim()
-            if (cleanOriginal.length < 2) continue
-
-            if (!rule.packageName.isNullOrBlank() && rule.packageName != nodePackage) {
-                continue
-            }
-
             if (rule.matchMode == ReplacementRule.MATCH_CONTAINS) {
-                if (cleanNodeText.contains(cleanOriginal, ignoreCase = true)) {
-                    return rule
+                val cleanOriginal = rule.originalText.trim()
+                if (cleanOriginal.length >= 2) {
+                    if (rule.packageName.isNullOrBlank() || rule.packageName == nodePackage) {
+                        if (cleanNodeText.contains(cleanOriginal, ignoreCase = true)) {
+                            return rule
+                        }
+                    }
                 }
             }
         }
 
-        // Priority 3: View ID match ONLY if matchMode was explicitly set to MATCH_VIEW_ID
+        // Priority 3: View ID match (only if explicitly set to MATCH_VIEW_ID by user)
         if (!nodeViewId.isNullOrBlank()) {
             for (rule in rules) {
                 if (!rule.isEnabled) continue
                 if (rule.matchMode == ReplacementRule.MATCH_VIEW_ID && !rule.viewId.isNullOrBlank()) {
-                    if (!rule.packageName.isNullOrBlank() && rule.packageName != nodePackage) {
-                        continue
-                    }
-                    if (rule.viewId == nodeViewId) {
-                        val cleanOriginal = rule.originalText.trim()
-                        if (cleanOriginal.isEmpty() || cleanNodeText.equals(cleanOriginal, ignoreCase = true)) {
-                            return rule
+                    if (rule.packageName.isNullOrBlank() || rule.packageName == nodePackage) {
+                        if (rule.viewId == nodeViewId) {
+                            val cleanOriginal = rule.originalText.trim()
+                            if (cleanOriginal.isEmpty() || cleanNodeText.equals(cleanOriginal, ignoreCase = true)) {
+                                return rule
+                            }
                         }
                     }
                 }

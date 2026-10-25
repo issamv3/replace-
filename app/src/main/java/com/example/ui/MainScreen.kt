@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -72,6 +73,8 @@ fun MainScreen(viewModel: MainViewModel) {
     val bubbleSizeDp by viewModel.bubbleSizeDp.collectAsStateWithLifecycle()
     val ocrFallbackEnabled by viewModel.ocrFallbackEnabled.collectAsStateWithLifecycle()
     val debounceMs by viewModel.debounceMs.collectAsStateWithLifecycle()
+    val isBubbleHidden by viewModel.isBubbleHidden.collectAsStateWithLifecycle()
+    val hotspotPosition by viewModel.hotspotPosition.collectAsStateWithLifecycle()
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var editingRule by remember { mutableStateOf<ReplacementRule?>(null) }
@@ -149,6 +152,8 @@ fun MainScreen(viewModel: MainViewModel) {
             StatusBanner(
                 isServiceActive = isServiceActive,
                 hasOverlayPermission = hasOverlayPermission,
+                isBubbleHidden = isBubbleHidden,
+                onRestoreBubble = viewModel::restoreFloatingBubble,
                 onEnableService = {
                     val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -210,10 +215,14 @@ fun MainScreen(viewModel: MainViewModel) {
             bubbleSizeDp = bubbleSizeDp,
             ocrFallbackEnabled = ocrFallbackEnabled,
             debounceMs = debounceMs,
+            hotspotPosition = hotspotPosition,
+            isBubbleHidden = isBubbleHidden,
             onOpacityChanged = viewModel::setBubbleOpacity,
             onBubbleSizeChanged = viewModel::setBubbleSize,
             onOcrFallbackChanged = viewModel::setOcrFallback,
             onDebounceChanged = viewModel::setDebounceMs,
+            onHotspotPositionChanged = viewModel::setHotspotPosition,
+            onRestoreBubble = viewModel::restoreFloatingBubble,
             onClearAllRules = viewModel::clearAllRules,
             onDismiss = { showSettingsDialog = false }
         )
@@ -224,6 +233,8 @@ fun MainScreen(viewModel: MainViewModel) {
 fun StatusBanner(
     isServiceActive: Boolean,
     hasOverlayPermission: Boolean,
+    isBubbleHidden: Boolean = false,
+    onRestoreBubble: () -> Unit = {},
     onEnableService: () -> Unit,
     onGrantOverlay: () -> Unit
 ) {
@@ -338,6 +349,55 @@ fun StatusBanner(
                     modifier = Modifier.testTag("grant_overlay_btn")
                 ) {
                     Text("Grant")
+                }
+            }
+        }
+    } else if (isBubbleHidden) {
+        // Bubble Hidden Banner with 1-tap Restore
+        Card(
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f)
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .testTag("bubble_hidden_badge")
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Visibility,
+                        contentDescription = "Hidden",
+                        tint = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Floating icon is hidden (tap corner hotspot to show)",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+                Button(
+                    onClick = onRestoreBubble,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    ),
+                    modifier = Modifier.testTag("banner_restore_bubble_btn")
+                ) {
+                    Text("Show")
                 }
             }
         }

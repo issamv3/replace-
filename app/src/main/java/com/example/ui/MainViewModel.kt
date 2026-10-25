@@ -37,6 +37,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val ocrFallbackEnabled: StateFlow<Boolean> = preferences.ocrFallbackEnabled
     val isAutoApplyActive: StateFlow<Boolean> = preferences.isAutoApplyActive
     val debounceMs: StateFlow<Long> = preferences.debounceMs
+    val isBubbleHidden: StateFlow<Boolean> = preferences.isBubbleHidden
+    val hotspotPosition: StateFlow<String> = preferences.hotspotPosition
 
     val filteredRules: StateFlow<List<ReplacementRule>> = combine(
         repository.allRules,
@@ -107,6 +109,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setDebounceMs(ms: Long) {
         preferences.setDebounceMs(ms)
+    }
+
+    fun setHotspotPosition(pos: String) {
+        preferences.setHotspotPosition(pos)
+    }
+
+    fun restoreFloatingBubble() {
+        preferences.setBubbleHidden(false)
+        TextReplacerAccessibilityService.restoreBubble()
     }
 
     fun seedDemoRules() {

@@ -42,10 +42,12 @@ class TextReplacerAccessibilityService : AccessibilityService() {
     private var floatingBubbleView: FloatingBubbleView? = null
     private var overlayContainerView: TextOverlayContainerView? = null
     private var inspectionOverlayView: InspectionOverlayView? = null
+    private var hotspotTriggerView: HotspotTriggerView? = null
     private var autoApplyEngine: AutoApplyEngine? = null
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val database = AppDatabase.getInstance(this)
         preferences = AppPreferences.getInstance(this)
@@ -62,6 +64,29 @@ class TextReplacerAccessibilityService : AccessibilityService() {
         autoApplyEngine = AutoApplyEngine(this, repository, preferences, overlayContainerView!!)
         autoApplyEngine?.start()
         floatingBubbleView?.updatePlayState(true)
+
+        // Observe bubble visibility and hotspot position
+        serviceScope.launch {
+            preferences.isBubbleHidden.collect { hidden ->
+                withContext(Dispatchers.Main) {
+                    if (hidden) {
+                        floatingBubbleView?.hideBubble()
+                        hotspotTriggerView?.show()
+                    } else {
+                        hotspotTriggerView?.hide()
+                        floatingBubbleView?.showBubble()
+                    }
+                }
+            }
+        }
+
+        serviceScope.launch {
+            preferences.hotspotPosition.collect { pos ->
+                withContext(Dispatchers.Main) {
+                    hotspotTriggerView?.applyPosition(pos)
+                }
+            }
+        }
     }
 
     private fun setupOverlayViews() {
@@ -83,7 +108,10 @@ class TextReplacerAccessibilityService : AccessibilityService() {
                 windowManager = windowManager,
                 preferences = preferences,
                 onAddReplacementClicked = { onAddReplacementTriggered() },
-                onToggleAutoApplyClicked = { onToggleAutoApplyTriggered() }
+                onToggleAutoApplyClicked = { onToggleAutoApplyTriggered() },
+                onBubbleDismissed = {
+                    preferences.setBubbleHidden(true)
+                }
             )
             try {
                 windowManager.addView(bubble, bubble.layoutParamsWindow)
@@ -92,6 +120,39 @@ class TextReplacerAccessibilityService : AccessibilityService() {
                 e.printStackTrace()
             }
         }
+
+        // 3. Hotspot Trigger View (shown when bubble is hidden)
+        if (hotspotTriggerView == null) {
+            val hotspot = HotspotTriggerView(
+                context = this,
+                windowManager = windowManager,
+                onHotspotTapped = {
+                    restoreBubbleFromExternal()
+                }
+            )
+            hotspot.applyPosition(preferences.hotspotPosition.value)
+            hotspotTriggerView = hotspot
+        }
+
+        if (preferences.isBubbleHidden.value) {
+            floatingBubbleView?.hideBubble()
+            hotspotTriggerView?.show()
+        } else {
+            hotspotTriggerView?.hide()
+            floatingBubbleView?.showBubble()
+        }
+    }
+
+    fun restoreBubbleFromExternal() {
+        preferences.setBubbleHidden(false)
+        hotspotTriggerView?.hide()
+        floatingBubbleView?.showBubble()
+    }
+
+    fun hideBubbleFromExternal() {
+        preferences.setBubbleHidden(true)
+        floatingBubbleView?.hideBubble()
+        hotspotTriggerView?.show()
     }
 
     private fun onToggleAutoApplyTriggered() {
@@ -106,26 +167,39 @@ class TextReplacerAccessibilityService : AccessibilityService() {
     }
 
     private fun onAddReplacementTriggered() {
-        // Collapse bubble menu
+        // Collapse bubble menu and temporarily hide bubble so it does not obstruct screen text
         floatingBubbleView?.collapseMenu()
+        floatingBubbleView?.hideBubble()
 
-        // Gather inspectable elements across all active windows (supports multi-window & dialogs)
+        // Gather inspectable elements across active window and all interactive system windows
         val rootsToScan = mutableListOf<AccessibilityNodeInfo>()
+        val seenRoots = mutableSetOf<AccessibilityNodeInfo>()
+
+        // 1. Prioritize root in active foreground window
         try {
-            val wins = windows
-            if (!wins.isNullOrEmpty()) {
-                for (w in wins) {
-                    val r = w.root
-                    if (r != null) rootsToScan.add(r)
-                }
+            val activeRoot = rootInActiveWindow
+            if (activeRoot != null) {
+                rootsToScan.add(activeRoot)
+                seenRoots.add(activeRoot)
             }
         } catch (e: Exception) {
             // Ignore
         }
 
-        if (rootsToScan.isEmpty()) {
-            val r = try { rootInActiveWindow } catch (e: Exception) { null }
-            if (r != null) rootsToScan.add(r)
+        // 2. Also scan all windows (status bar, navigation, multi-window, dialogs, popups)
+        try {
+            val wins = windows
+            if (!wins.isNullOrEmpty()) {
+                for (w in wins) {
+                    val r = try { w.root } catch (e: Exception) { null }
+                    if (r != null && !seenRoots.contains(r)) {
+                        rootsToScan.add(r)
+                        seenRoots.add(r)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Ignore
         }
 
         val rawItems = mutableListOf<InspectableItem>()
@@ -140,39 +214,64 @@ class TextReplacerAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Deduplicate overlapping items so only the clean leaf text elements are highlighted
+        // Deduplicate overlapping items prioritizing real text views with exact bounds
         val items = deduplicateInspectableItems(rawItems)
 
         // Capture screenshot to sample exact text & background colors
         captureScreenAndLaunchInspection(items)
     }
 
+    private fun getNodeQualityScore(item: InspectableItem): Int {
+        var score = 0
+        if (item.hasRealText) score += 1000
+        val cls = item.className ?: ""
+        if (cls.contains("TextView", ignoreCase = true)) score += 500
+        if (cls.contains("Button", ignoreCase = true)) score += 300
+        if (cls.contains("EditText", ignoreCase = true)) score += 300
+        if (cls.contains("Switch", ignoreCase = true)) score += 200
+        if (item.isLeaf) score += 200
+        if (cls.contains("ImageView", ignoreCase = true) && !item.hasRealText) score -= 800
+        return score
+    }
+
     private fun deduplicateInspectableItems(items: List<InspectableItem>): MutableList<InspectableItem> {
         if (items.isEmpty()) return mutableListOf()
-        val sorted = items.sortedBy { it.bounds.width() * it.bounds.height() }
+
+        // Sort items so higher-quality representations (real TextViews with text) are processed first
+        val sorted = items.sortedWith(
+            compareByDescending<InspectableItem> { getNodeQualityScore(it) }
+                .thenBy { it.bounds.width() * it.bounds.height() }
+        )
+
         val accepted = mutableListOf<InspectableItem>()
         for (item in sorted) {
-            val overlaps = accepted.any { existing ->
+            val isDuplicate = accepted.any { existing ->
                 if (!Rect.intersects(item.bounds, existing.bounds)) {
                     false
                 } else {
-                    val intersectLeft = Math.max(item.bounds.left, existing.bounds.left)
-                    val intersectTop = Math.max(item.bounds.top, existing.bounds.top)
-                    val intersectRight = Math.min(item.bounds.right, existing.bounds.right)
-                    val intersectBottom = Math.min(item.bounds.bottom, existing.bounds.bottom)
-                    val intersectArea = (intersectRight - intersectLeft).coerceAtLeast(0) *
-                            (intersectBottom - intersectTop).coerceAtLeast(0)
+                    // ONLY deduplicate if they represent the EXACT SAME text
+                    val isExactSameText = item.text.trim().equals(existing.text.trim(), ignoreCase = true)
+                    if (!isExactSameText) {
+                        false // Different texts on screen must NEVER hide each other!
+                    } else {
+                        val intersectLeft = Math.max(item.bounds.left, existing.bounds.left)
+                        val intersectTop = Math.max(item.bounds.top, existing.bounds.top)
+                        val intersectRight = Math.min(item.bounds.right, existing.bounds.right)
+                        val intersectBottom = Math.min(item.bounds.bottom, existing.bounds.bottom)
+                        val intersectArea = (intersectRight - intersectLeft).coerceAtLeast(0) *
+                                (intersectBottom - intersectTop).coerceAtLeast(0)
 
-                    val itemArea = item.bounds.width() * item.bounds.height()
-                    val existingArea = existing.bounds.width() * existing.bounds.height()
-                    val minArea = Math.min(itemArea, existingArea).coerceAtLeast(1)
+                        val itemArea = (item.bounds.width() * item.bounds.height()).coerceAtLeast(1)
+                        val existingArea = (existing.bounds.width() * existing.bounds.height()).coerceAtLeast(1)
+                        val minArea = Math.min(itemArea, existingArea)
 
-                    (intersectArea.toFloat() / minArea) > 0.30f ||
-                            (Math.abs(item.bounds.centerX() - existing.bounds.centerX()) < 24 &&
-                             Math.abs(item.bounds.centerY() - existing.bounds.centerY()) < 24)
+                        (intersectArea.toFloat() / minArea) > 0.40f ||
+                                (Math.abs(item.bounds.centerX() - existing.bounds.centerX()) < 24 &&
+                                 Math.abs(item.bounds.centerY() - existing.bounds.centerY()) < 24)
+                    }
                 }
             }
-            if (!overlaps) {
+            if (!isDuplicate) {
                 accepted.add(item)
             }
         }
@@ -186,27 +285,58 @@ class TextReplacerAccessibilityService : AccessibilityService() {
     ) {
         if (node == null) return
 
-        if (node.isVisibleToUser) {
-            val text = node.text?.toString()?.trim()
-            val contentDesc = node.contentDescription?.toString()?.trim()
-            val effectiveText = if (!text.isNullOrBlank()) text else contentDesc
+        // Skip our own overlay views so they don't produce false detection boxes
+        val pkg = node.packageName?.toString()
+        val cls = node.className?.toString() ?: ""
+        if (pkg == packageName) {
+            if (cls.contains("FloatingBubbleView") ||
+                cls.contains("InspectionOverlayView") ||
+                cls.contains("TextOverlayContainerView") ||
+                cls.contains("HotspotTriggerView") ||
+                node.text?.toString() == "⇄" ||
+                node.text?.toString()?.contains("Tap any highlighted text") == true
+            ) {
+                return
+            }
+        }
 
-            if (!effectiveText.isNullOrBlank()) {
-                node.getBoundsInScreen(tempRect)
-                if (tempRect.width() > 0 && tempRect.height() > 0) {
-                    val density = resources.displayMetrics.density
-                    val calculatedSizeSp = (tempRect.height() * 0.70f) / density
-                    outItems.add(
-                        InspectableItem(
-                            text = effectiveText,
-                            bounds = Rect(tempRect),
-                            packageName = node.packageName?.toString(),
-                            viewId = node.viewIdResourceName,
-                            className = node.className?.toString(),
-                            textSizeSp = calculatedSizeSp
-                        )
+        val rawText = node.text?.toString()?.trim()
+        val contentDesc = node.contentDescription?.toString()?.trim()
+        val hintText = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            node.hintText?.toString()?.trim()
+        } else null
+        val tooltipText = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            node.tooltipText?.toString()?.trim()
+        } else null
+
+        val hasRealText = !rawText.isNullOrBlank()
+        val effectiveText = when {
+            hasRealText -> rawText
+            !contentDesc.isNullOrBlank() -> contentDesc
+            !hintText.isNullOrBlank() -> hintText
+            !tooltipText.isNullOrBlank() -> tooltipText
+            else -> null
+        }
+
+        val isLeaf = node.childCount == 0
+
+        if (!effectiveText.isNullOrBlank()) {
+            node.getBoundsInScreen(tempRect)
+            if (tempRect.width() > 0 && tempRect.height() > 0) {
+                val density = resources.displayMetrics.density
+                val calculatedSizeSp = (tempRect.height() * 0.70f) / density
+                outItems.add(
+                    InspectableItem(
+                        text = effectiveText,
+                        bounds = Rect(tempRect),
+                        packageName = node.packageName?.toString(),
+                        viewId = node.viewIdResourceName,
+                        className = node.className?.toString(),
+                        textSizeSp = calculatedSizeSp,
+                        hasRealText = hasRealText,
+                        isLeaf = isLeaf
                     )
-                }
+                )
             }
         }
 
@@ -257,16 +387,20 @@ class TextReplacerAccessibilityService : AccessibilityService() {
 
     private fun processItemsAndShowInspection(items: MutableList<InspectableItem>, bitmap: Bitmap?) {
         serviceScope.launch {
-            // If OCR fallback is enabled and accessibility tree exposed very few nodes (e.g. game/canvas)
-            if (preferences.ocrFallbackEnabled.value && bitmap != null && items.size < 3) {
+            // If OCR fallback is enabled and we have a bitmap, supplement any texts missed by accessibility tree
+            if (preferences.ocrFallbackEnabled.value && bitmap != null) {
                 val ocrBlocks = OcrFallbackHelper.recognizeText(bitmap)
                 for (block in ocrBlocks) {
-                    if (items.none { it.bounds.contains(block.bounds.centerX(), block.bounds.centerY()) }) {
+                    if (block.text.isNotBlank() &&
+                        items.none { it.bounds.contains(block.bounds.centerX(), block.bounds.centerY()) }
+                    ) {
                         items.add(
                             InspectableItem(
                                 text = block.text,
                                 bounds = block.bounds,
-                                packageName = null
+                                packageName = null,
+                                hasRealText = true,
+                                isLeaf = true
                             )
                         )
                     }
@@ -289,6 +423,10 @@ class TextReplacerAccessibilityService : AccessibilityService() {
             screenshotBitmap = bitmap,
             onDismiss = {
                 inspectionOverlayView = null
+                // Restore floating bubble if not hidden by user
+                if (!preferences.isBubbleHidden.value) {
+                    floatingBubbleView?.showBubble()
+                }
             },
             onRuleConfirmed = { rule ->
                 applyAndSaveRule(rule)
@@ -363,6 +501,19 @@ class TextReplacerAccessibilityService : AccessibilityService() {
             }
             overlayContainerView = null
         }
+
+        if (instance == this) {
+            instance = null
+        }
+
+        hotspotTriggerView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                // Ignore
+            }
+            hotspotTriggerView = null
+        }
     }
 
     private fun startForegroundNotification() {
@@ -421,5 +572,16 @@ class TextReplacerAccessibilityService : AccessibilityService() {
         private const val NOTIFICATION_ID = 2001
         private val _isServiceActive = MutableStateFlow(false)
         val isServiceActive = _isServiceActive.asStateFlow()
+
+        @Volatile
+        private var instance: TextReplacerAccessibilityService? = null
+
+        fun restoreBubble() {
+            instance?.restoreBubbleFromExternal()
+        }
+
+        fun hideBubble() {
+            instance?.hideBubbleFromExternal()
+        }
     }
 }

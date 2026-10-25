@@ -1,4 +1,4 @@
-name: Build ARMv7 APK
+name: Build ARMv8 APK
 
 on:
   push:
@@ -19,7 +19,7 @@ on:
 
 jobs:
   build:
-    name: Build ARMv7 (armeabi-v7a) APK
+    name: Build ARMv8 (arm64-v8a) APK
     runs-on: ubuntu-latest
 
     steps:
@@ -52,34 +52,34 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Build ARMv7 APK with Gradle
+      - name: Build ARMv8 (arm64-v8a) APK with Gradle
         run: |
           BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
-          echo "Building ARMv7 ($BUILD_TYPE)..."
+          echo "Building ARMv8 ($BUILD_TYPE)..."
           if [ "$BUILD_TYPE" = "release" ]; then
-            ./gradlew :app:assembleRelease -PtargetAbi=armeabi-v7a --stacktrace
+            ./gradlew :app:assembleRelease -PtargetAbi=arm64-v8a --stacktrace
           else
-            ./gradlew :app:assembleDebug -PtargetAbi=armeabi-v7a --stacktrace
+            ./gradlew :app:assembleDebug -PtargetAbi=arm64-v8a --stacktrace
           fi
 
-      - name: Locate and Prepare ARMv7 APK
+      - name: Locate and Prepare ARMv8 APK
         run: |
           mkdir -p output_apk
-          # Locate generated APK for armeabi-v7a or fallback
-          ARMV7_APK=$(find app/build/outputs/apk -name "*armeabi-v7a*.apk" -o -name "*.apk" | head -n 1)
-          if [ -n "$ARMV7_APK" ] && [ -f "$ARMV7_APK" ]; then
-            echo "Found APK: $ARMV7_APK"
-            cp "$ARMV7_APK" output_apk/TextShift-armeabi-v7a.apk
+          # Locate generated APK for arm64-v8a
+          ARMV8_APK=$(find app/build/outputs/apk -name "*arm64-v8a*.apk" -o -name "*.apk" | head -n 1)
+          if [ -n "$ARMV8_APK" ] && [ -f "$ARMV8_APK" ]; then
+            echo "Found APK: $ARMV8_APK"
+            cp "$ARMV8_APK" output_apk/TextShift-arm64-v8a.apk
           else
             echo "ERROR: No APK found!"
             exit 1
           fi
 
-      - name: Upload ARMv7 APK Artifact
+      - name: Upload ARMv8 APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TextShift-armeabi-v7a-APK
-          path: output_apk/TextShift-armeabi-v7a.apk
+          name: TextShift-arm64-v8a-APK
+          path: output_apk/TextShift-arm64-v8a.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -87,7 +87,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: output_apk/TextShift-armeabi-v7a.apk
+          files: output_apk/TextShift-arm64-v8a.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

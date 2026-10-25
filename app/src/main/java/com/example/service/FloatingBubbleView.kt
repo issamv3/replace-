@@ -9,6 +9,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.util.DisplayMetrics
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -28,7 +29,8 @@ class FloatingBubbleView(
     private val windowManager: WindowManager,
     private val preferences: AppPreferences,
     private val onAddReplacementClicked: () -> Unit,
-    private val onToggleAutoApplyClicked: () -> Unit
+    private val onToggleAutoApplyClicked: () -> Unit,
+    private val onBubbleDismissed: () -> Unit
 ) : FrameLayout(context) {
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
@@ -212,6 +214,10 @@ class FloatingBubbleView(
         }
     }
 
+    private val deleteTargetView = DeleteTargetView(context, windowManager)
+    private var holdRunnable: Runnable? = null
+    private var isHoldingForDismiss = false
+
     @SuppressLint("ClickableViewAccessibility")
     private fun setupTouchListener() {
         bubbleContainer.setOnTouchListener { _, event ->
@@ -223,6 +229,8 @@ class FloatingBubbleView(
                     initialTouchY = event.rawY
                     isDragging = false
                     applyOpacity(1.0f)
+
+                    startHoldTimer()
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -230,9 +238,13 @@ class FloatingBubbleView(
                     val dy = (event.rawY - initialTouchY).toInt()
 
                     if (abs(dx) > touchSlop || abs(dy) > touchSlop) {
-                        isDragging = true
-                        if (isExpanded) {
-                            collapseMenu()
+                        if (!isDragging) {
+                            isDragging = true
+                            cancelHoldTimer()
+                            deleteTargetView.show()
+                            if (isExpanded) {
+                                collapseMenu()
+                            }
                         }
                     }
 
@@ -244,23 +256,104 @@ class FloatingBubbleView(
                         } catch (e: Exception) {
                             // View might not be attached
                         }
+
+                        val isHovered = deleteTargetView.updateHover(event.rawX, event.rawY)
+                        bubbleContainer.alpha = if (isHovered) 0.45f else 1.0f
                     }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    cancelHoldTimer()
                     if (!isDragging) {
                         // Click event -> toggle menu
                         toggleMenu()
                     } else {
-                        // Drag released -> snap to nearest edge
-                        snapToEdge()
+                        val hovered = deleteTargetView.isCurrentlyHovered()
+                        deleteTargetView.hide()
+                        if (hovered) {
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            animateDisappearAndDismiss()
+                        } else {
+                            snapToEdge()
+                        }
                     }
+                    applyOpacity(preferences.bubbleOpacity.value)
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    cancelHoldTimer()
+                    deleteTargetView.hide()
                     applyOpacity(preferences.bubbleOpacity.value)
                     true
                 }
                 else -> false
             }
         }
+    }
+
+    private fun startHoldTimer() {
+        isHoldingForDismiss = true
+        // Smoothly scale bubble up slightly over 5 seconds to provide visual countdown feedback
+        bubbleContainer.animate()
+            .scaleX(1.18f)
+            .scaleY(1.18f)
+            .setDuration(5000L)
+            .start()
+
+        holdRunnable = Runnable {
+            if (isHoldingForDismiss && !isDragging) {
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                animateDisappearAndDismiss()
+            }
+        }
+        postDelayed(holdRunnable, 5000L)
+    }
+
+    private fun cancelHoldTimer() {
+        if (isHoldingForDismiss) {
+            isHoldingForDismiss = false
+            holdRunnable?.let { removeCallbacks(it) }
+            holdRunnable = null
+            bubbleContainer.animate()
+                .scaleX(1.0f)
+                .scaleY(1.0f)
+                .setDuration(160)
+                .start()
+        }
+    }
+
+    private fun animateDisappearAndDismiss() {
+        bubbleContainer.animate()
+            .scaleX(0f)
+            .scaleY(0f)
+            .alpha(0f)
+            .setDuration(220)
+            .withEndAction {
+                visibility = View.GONE
+                deleteTargetView.hide()
+                onBubbleDismissed()
+            }
+            .start()
+    }
+
+    fun showBubble() {
+        visibility = View.VISIBLE
+        bubbleContainer.scaleX = 0.5f
+        bubbleContainer.scaleY = 0.5f
+        bubbleContainer.alpha = 0f
+        applyOpacity(preferences.bubbleOpacity.value)
+        bubbleContainer.animate()
+            .scaleX(1.0f)
+            .scaleY(1.0f)
+            .alpha(preferences.bubbleOpacity.value)
+            .setDuration(220)
+            .start()
+    }
+
+    fun hideBubble() {
+        cancelHoldTimer()
+        deleteTargetView.hide()
+        visibility = View.GONE
     }
 
     private fun toggleMenu() {

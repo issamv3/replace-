@@ -36,6 +36,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.data.AppPreferences
 import kotlin.math.roundToInt
 
 @Composable
@@ -44,10 +46,14 @@ fun SettingsDialog(
     bubbleSizeDp: Int,
     ocrFallbackEnabled: Boolean,
     debounceMs: Long,
+    hotspotPosition: String,
+    isBubbleHidden: Boolean,
     onOpacityChanged: (Float) -> Unit,
     onBubbleSizeChanged: (Int) -> Unit,
     onOcrFallbackChanged: (Boolean) -> Unit,
     onDebounceChanged: (Long) -> Unit,
+    onHotspotPositionChanged: (String) -> Unit,
+    onRestoreBubble: () -> Unit,
     onClearAllRules: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -165,6 +171,89 @@ fun SettingsDialog(
                         label = { Text("Eco (250ms)") },
                         modifier = Modifier.testTag("debounce_eco")
                     )
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Hotspot Restore & Dismiss Gestures
+                Text(
+                    text = "Icon Dismiss & Restore",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "• Hold the icon for 5s to hide it\n• Drag icon to bottom ✕ target to hide it\n• Tap the corner hotspot below or enter the app to restore it",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = "Screen Restore Hotspot Corner",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = hotspotPosition == AppPreferences.HOTSPOT_TOP_RIGHT,
+                            onClick = { onHotspotPositionChanged(AppPreferences.HOTSPOT_TOP_RIGHT) },
+                            label = { Text("Top Right", fontSize = 12.sp) },
+                            modifier = Modifier.weight(1f).testTag("hotspot_top_right")
+                        )
+                        FilterChip(
+                            selected = hotspotPosition == AppPreferences.HOTSPOT_TOP_LEFT,
+                            onClick = { onHotspotPositionChanged(AppPreferences.HOTSPOT_TOP_LEFT) },
+                            label = { Text("Top Left", fontSize = 12.sp) },
+                            modifier = Modifier.weight(1f).testTag("hotspot_top_left")
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = hotspotPosition == AppPreferences.HOTSPOT_BOTTOM_RIGHT,
+                            onClick = { onHotspotPositionChanged(AppPreferences.HOTSPOT_BOTTOM_RIGHT) },
+                            label = { Text("Bottom Right", fontSize = 12.sp) },
+                            modifier = Modifier.weight(1f).testTag("hotspot_bottom_right")
+                        )
+                        FilterChip(
+                            selected = hotspotPosition == AppPreferences.HOTSPOT_BOTTOM_LEFT,
+                            onClick = { onHotspotPositionChanged(AppPreferences.HOTSPOT_BOTTOM_LEFT) },
+                            label = { Text("Bottom Left", fontSize = 12.sp) },
+                            modifier = Modifier.weight(1f).testTag("hotspot_bottom_left")
+                        )
+                    }
+                }
+
+                if (isBubbleHidden) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = onRestoreBubble,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("restore_bubble_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Visibility,
+                            contentDescription = null,
+                            modifier = Modifier.padding(end = 6.dp)
+                        )
+                        Text("Restore Floating Icon Now")
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))

@@ -39,6 +39,8 @@ data class InspectableItem(
     val viewId: String? = null,
     val className: String? = null,
     val textSizeSp: Float = 16f,
+    val hasRealText: Boolean = true,
+    val isLeaf: Boolean = true,
     val isBold: Boolean = false,
     val isItalic: Boolean = false
 )
@@ -133,10 +135,11 @@ class InspectionOverlayView(
             gravity = Gravity.CENTER_VERTICAL
             val pad = (12 * density).roundToInt()
             val padHoriz = (16 * density).roundToInt()
-            setPadding(padHoriz, pad + (24 * density).roundToInt(), padHoriz, pad) // extra top for status bar
+            setPadding(padHoriz, pad, padHoriz, pad)
             background = GradientDrawable().apply {
                 setColor(0xEE0F172A.toInt())
                 cornerRadius = 16f * density
+                setStroke((1f * density).roundToInt(), 0xFF334155.toInt())
             }
             elevation = 16f * density
 
@@ -164,9 +167,9 @@ class InspectionOverlayView(
             LayoutParams.MATCH_PARENT,
             LayoutParams.WRAP_CONTENT
         ).apply {
-            gravity = Gravity.TOP
+            gravity = Gravity.BOTTOM
             val margin = (16 * density).roundToInt()
-            setMargins(margin, (16 * density).roundToInt(), margin, 0)
+            setMargins(margin, 0, margin, (28 * density).roundToInt())
         }
         addView(banner, lp)
     }
@@ -370,10 +373,13 @@ class InspectionOverlayView(
         }
         card.addView(previewLabel)
 
+        val targetTextSize = item.textSizeSp.coerceIn(11f, 36f)
+        var selectedWidthScale = 1.0f
+
         val previewBox = TextView(context).apply {
             text = if (item.text.isNotBlank()) item.text else "Preview"
             setTextColor(selectedTextColor)
-            textSize = 16f
+            textSize = targetTextSize
             gravity = Gravity.CENTER
             val padP = (12 * density).roundToInt()
             setPadding(padP, padP, padP, padP)
@@ -393,11 +399,83 @@ class InspectionOverlayView(
             override fun afterTextChanged(s: Editable?) {}
         })
 
+        // Text Width Control (Slider & Presets)
+        val widthHeader = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, (10 * density).roundToInt(), 0, (2 * density).roundToInt())
+        }
+        val widthLabel = TextView(context).apply {
+            text = "TEXT WIDTH / SCALE"
+            textSize = 11f
+            setTextColor(0xFF38BDF8.toInt())
+            paint.isFakeBoldText = true
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val widthValueLabel = TextView(context).apply {
+            text = "100%"
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            paint.isFakeBoldText = true
+        }
+        widthHeader.addView(widthLabel)
+        widthHeader.addView(widthValueLabel)
+        card.addView(widthHeader)
+
+        val widthSeekBar = android.widget.SeekBar(context).apply {
+            max = 150 // 0 to 150 -> 50% to 200%
+            progress = 50 // 100%
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                    val scale = 0.5f + (progress / 100f)
+                    selectedWidthScale = scale
+                    previewBox.scaleX = scale
+                    widthValueLabel.text = "${(scale * 100).toInt()}%"
+                }
+                override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            })
+        }
+        card.addView(widthSeekBar)
+
+        // Width quick preset buttons (80%, 100%, 120%, 150%)
+        val widthPresetRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, (2 * density).roundToInt(), 0, (8 * density).roundToInt())
+        }
+        val presets = listOf(0.8f to "80%", 1.0f to "100%", 1.2f to "120%", 1.5f to "150%")
+        for ((scale, text) in presets) {
+            val btn = Button(context).apply {
+                this.text = text
+                textSize = 10f
+                setTextColor(Color.WHITE)
+                val padB = (4 * density).roundToInt()
+                setPadding(padB, padB, padB, padB)
+                background = GradientDrawable().apply {
+                    setColor(0xFF334155.toInt())
+                    cornerRadius = 8f * density
+                }
+                val lpBtn = LinearLayout.LayoutParams(0, (28 * density).roundToInt(), 1f).apply {
+                    setMargins((2 * density).roundToInt(), 0, (2 * density).roundToInt(), 0)
+                }
+                layoutParams = lpBtn
+                setOnClickListener {
+                    selectedWidthScale = scale
+                    previewBox.scaleX = scale
+                    widthSeekBar.progress = ((scale - 0.5f) * 100).toInt()
+                    widthValueLabel.text = "${(scale * 100).toInt()}%"
+                }
+            }
+            widthPresetRow.addView(btn)
+        }
+        card.addView(widthPresetRow)
+
         // Color Palettes Row (Background / Text presets)
         val colorRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, (10 * density).roundToInt(), 0, (10 * density).roundToInt())
+            setPadding(0, (8 * density).roundToInt(), 0, (8 * density).roundToInt())
         }
         val colorInfo = TextView(context).apply {
             text = "Colors: Sampled auto-fill"
@@ -466,14 +544,15 @@ class InspectionOverlayView(
                         className = item.className,
                         textColor = selectedTextColor,
                         backgroundColor = selectedBgColor,
-                        textSizeSp = item.textSizeSp,
+                        textSizeSp = targetTextSize,
                         isBold = item.isBold,
                         isItalic = item.isItalic,
                         matchMode = selectedMatchMode,
                         boundsLeft = item.bounds.left,
                         boundsTop = item.bounds.top,
                         boundsRight = item.bounds.right,
-                        boundsBottom = item.bounds.bottom
+                        boundsBottom = item.bounds.bottom,
+                        widthScale = selectedWidthScale
                     )
                     onRuleConfirmed(rule)
                     dismissSelf()

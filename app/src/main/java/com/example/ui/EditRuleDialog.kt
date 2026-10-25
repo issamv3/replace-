@@ -31,8 +31,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.Slider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +62,7 @@ fun EditRuleDialog(
     var matchMode by remember { mutableStateOf(rule?.matchMode ?: ReplacementRule.MATCH_EXACT) }
     var textColor by remember { mutableIntStateOf(rule?.textColor ?: Color.White.toArgb()) }
     var backgroundColor by remember { mutableIntStateOf(rule?.backgroundColor ?: 0xFF0F172A.toInt()) }
+    var widthScale by remember { mutableFloatStateOf(rule?.widthScale ?: 1.0f) }
 
     val presetColors = listOf(
         0xFF0F172A.toInt(), // Slate 900
@@ -164,11 +168,63 @@ fun EditRuleDialog(
                         text = replacementText.ifBlank { originalText.ifBlank { "Preview Text" } },
                         color = Color(textColor),
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.graphicsLayer(scaleX = widthScale)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "TEXT WIDTH / STRETCH",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${(widthScale * 100).toInt()}%",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Slider(
+                    value = widthScale,
+                    onValueChange = { widthScale = it },
+                    valueRange = 0.5f..2.0f,
+                    steps = 14,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("width_scale_slider")
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        0.8f to "80%",
+                        1.0f to "100%",
+                        1.2f to "120%",
+                        1.5f to "150%"
+                    ).forEach { (scale, label) ->
+                        FilterChip(
+                            selected = kotlin.math.abs(widthScale - scale) < 0.05f,
+                            onClick = { widthScale = scale },
+                            label = { Text(label, fontSize = 11.sp) }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -240,7 +296,8 @@ fun EditRuleDialog(
                             replacementText = replacementText.trim().ifBlank { originalText.trim() },
                             matchMode = matchMode,
                             textColor = textColor,
-                            backgroundColor = backgroundColor
+                            backgroundColor = backgroundColor,
+                            widthScale = widthScale
                         )
                         onSave(updated)
                         onDismiss()
