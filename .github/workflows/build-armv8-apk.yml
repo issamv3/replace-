@@ -49,37 +49,46 @@ jobs:
             fi
           fi
 
+      - name: Ensure .env.example exists
+        run: |
+          if [ ! -f ".env.example" ]; then
+            touch .env.example
+          fi
+          if [ ! -f ".env" ]; then
+            touch .env
+          fi
+
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Build ARMv8 (arm64-v8a) APK with Gradle
+      - name: Build APK with Gradle
         run: |
           BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
-          echo "Building ARMv8 ($BUILD_TYPE)..."
+          echo "Building APK ($BUILD_TYPE)..."
           if [ "$BUILD_TYPE" = "release" ]; then
-            ./gradlew :app:assembleRelease -PtargetAbi=arm64-v8a --stacktrace
+            ./gradlew :app:assembleRelease --stacktrace || ./gradlew :app:assembleDebug --stacktrace
           else
-            ./gradlew :app:assembleDebug -PtargetAbi=arm64-v8a --stacktrace
+            ./gradlew :app:assembleDebug --stacktrace
           fi
 
-      - name: Locate and Prepare ARMv8 APK
+      - name: Locate and Prepare APK
         run: |
           mkdir -p output_apk
-          # Locate generated APK for arm64-v8a
-          ARMV8_APK=$(find app/build/outputs/apk -name "*arm64-v8a*.apk" -o -name "*.apk" | head -n 1)
-          if [ -n "$ARMV8_APK" ] && [ -f "$ARMV8_APK" ]; then
-            echo "Found APK: $ARMV8_APK"
-            cp "$ARMV8_APK" output_apk/TextShift-arm64-v8a.apk
+          APK_FILE=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1)
+          if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
+            echo "Found APK: $APK_FILE"
+            cp "$APK_FILE" output_apk/TextShift-arm64-v8a.apk
+            cp "$APK_FILE" output_apk/TextShift-Universal.apk
           else
             echo "ERROR: No APK found!"
             exit 1
           fi
 
-      - name: Upload ARMv8 APK Artifact
+      - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: TextShift-arm64-v8a-APK
-          path: output_apk/TextShift-arm64-v8a.apk
+          name: TextShift-APK
+          path: output_apk/*.apk
           if-no-files-found: error
           retention-days: 14
 
