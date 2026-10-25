@@ -42,7 +42,8 @@ data class InspectableItem(
     val hasRealText: Boolean = true,
     val isLeaf: Boolean = true,
     val isBold: Boolean = false,
-    val isItalic: Boolean = false
+    val isItalic: Boolean = false,
+    val fullSentence: String? = null
 )
 
 @SuppressLint("ViewConstructor")
@@ -130,48 +131,35 @@ class InspectionOverlayView(
     }
 
     private fun setupTopBanner() {
-        val banner = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            val pad = (12 * density).roundToInt()
-            val padHoriz = (16 * density).roundToInt()
-            setPadding(padHoriz, pad, padHoriz, pad)
+        // Floating dismiss button (X) that cleanly closes the inspection overlay
+        val closeBtn = FrameLayout(context).apply {
+            val btnSize = (48 * density).roundToInt()
+            layoutParams = LayoutParams(btnSize, btnSize).apply {
+                gravity = Gravity.TOP or Gravity.END
+                val marginHoriz = (18 * density).roundToInt()
+                val marginTop = (48 * density).roundToInt()
+                setMargins(0, marginTop, marginHoriz, 0)
+            }
             background = GradientDrawable().apply {
-                setColor(0xEE0F172A.toInt())
-                cornerRadius = 16f * density
-                setStroke((1f * density).roundToInt(), 0xFF334155.toInt())
+                shape = GradientDrawable.OVAL
+                setColor(0xEE0F172A.toInt()) // Dark slate
+                setStroke((1.5f * density).roundToInt(), 0xFF38BDF8.toInt()) // Cyan border
             }
             elevation = 16f * density
 
-            val infoText = TextView(context).apply {
-                text = "✨ Tap any highlighted text to replace"
+            val icon = TextView(context).apply {
+                text = "✕"
+                textSize = 20f
                 setTextColor(Color.WHITE)
-                textSize = 14f
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                gravity = Gravity.CENTER
+                layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
             }
-            val closeBtn = ImageView(context).apply {
-                setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
-                setColorFilter(Color.WHITE)
-                val btnSize = (32 * density).roundToInt()
-                layoutParams = LinearLayout.LayoutParams(btnSize, btnSize)
-                setOnClickListener {
-                    dismissSelf()
-                }
+            addView(icon)
+            setOnClickListener {
+                dismissSelf()
             }
-
-            addView(infoText)
-            addView(closeBtn)
         }
-
-        val lp = LayoutParams(
-            LayoutParams.MATCH_PARENT,
-            LayoutParams.WRAP_CONTENT
-        ).apply {
-            gravity = Gravity.BOTTOM
-            val margin = (16 * density).roundToInt()
-            setMargins(margin, 0, margin, (28 * density).roundToInt())
-        }
-        addView(banner, lp)
+        addView(closeBtn)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -249,6 +237,9 @@ class InspectionOverlayView(
 
                     if (clickedItem != null) {
                         openReplacementDialog(clickedItem)
+                    } else {
+                        // Tapped outside any word on the background scrim -> close overlay
+                        dismissSelf()
                     }
                 } else {
                     // Dragged area completed -> fallback manual area selection
@@ -284,7 +275,8 @@ class InspectionOverlayView(
         val colors = ColorSampler.sample(screenshotBitmap, item.bounds)
         var selectedBgColor = colors.backgroundColor
         var selectedTextColor = colors.textColor
-        var selectedMatchMode = ReplacementRule.MATCH_EXACT
+        val isPartOfSentence = !item.fullSentence.isNullOrBlank() && item.fullSentence.trim() != item.text.trim()
+        var selectedMatchMode = if (isPartOfSentence) ReplacementRule.MATCH_CONTAINS else ReplacementRule.MATCH_EXACT
 
         val dialogContainer = FrameLayout(context).apply {
             setBackgroundColor(Color.argb(160, 0, 0, 0))
@@ -306,7 +298,7 @@ class InspectionOverlayView(
 
         // Title
         val titleText = TextView(context).apply {
-            text = "Create Text Replacement"
+            text = "Replace Word / Text"
             textSize = 20f
             setTextColor(Color.WHITE)
             paint.isFakeBoldText = true
@@ -315,16 +307,22 @@ class InspectionOverlayView(
 
         // Subtitle / context
         val subText = TextView(context).apply {
-            text = if (!item.packageName.isNullOrBlank()) "App: ${item.packageName}" else "Screen Text Element"
+            text = if (!item.fullSentence.isNullOrBlank()) {
+                "In: \"${item.fullSentence}\""
+            } else if (!item.packageName.isNullOrBlank()) {
+                "App: ${item.packageName}"
+            } else {
+                "Screen Text Element"
+            }
             textSize = 12f
             setTextColor(0xFF94A3B8.toInt())
-            setPadding(0, (4 * density).roundToInt(), 0, (12 * density).roundToInt())
+            setPadding(0, (4 * density).roundToInt(), 0, (10 * density).roundToInt())
         }
         card.addView(subText)
 
         // Original Text Label & Input
         val origLabel = TextView(context).apply {
-            text = "ORIGINAL TEXT"
+            text = "TARGET WORD"
             textSize = 11f
             setTextColor(0xFF38BDF8.toInt())
             paint.isFakeBoldText = true
@@ -340,6 +338,56 @@ class InspectionOverlayView(
             setPadding(padInput, padInput, padInput, padInput)
         }
         card.addView(origEditText)
+
+        // If part of sentence, show word chips so user can switch words easily
+        if (!item.fullSentence.isNullOrBlank()) {
+            val sentenceWords = item.fullSentence.split(Regex("\\s+")).filter { it.isNotBlank() }
+            if (sentenceWords.size > 1) {
+                val wordsScroll = HorizontalScrollView(context).apply {
+                    isHorizontalScrollBarEnabled = false
+                    setPadding(0, (6 * density).roundToInt(), 0, (8 * density).roundToInt())
+                }
+                val wordsRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                }
+                for (w in sentenceWords) {
+                    val wordChip = TextView(context).apply {
+                        text = w
+                        textSize = 12f
+                        setTextColor(if (w == item.text) Color.WHITE else 0xFF94A3B8.toInt())
+                        val padH = (10 * density).roundToInt()
+                        val padV = (5 * density).roundToInt()
+                        setPadding(padH, padV, padH, padV)
+                        background = GradientDrawable().apply {
+                            setColor(if (w == item.text) 0xFF0284C7.toInt() else 0xFF334155.toInt())
+                            cornerRadius = 12f * density
+                        }
+                        val lpWord = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply {
+                            marginEnd = (6 * density).roundToInt()
+                        }
+                        layoutParams = lpWord
+                        setOnClickListener {
+                            origEditText.setText(w)
+                            selectedMatchMode = ReplacementRule.MATCH_CONTAINS
+                            for (c in 0 until wordsRow.childCount) {
+                                val otherChip = wordsRow.getChildAt(c) as? TextView ?: continue
+                                val isSelected = otherChip.text == w
+                                otherChip.setTextColor(if (isSelected) Color.WHITE else 0xFF94A3B8.toInt())
+                                (otherChip.background as? GradientDrawable)?.setColor(
+                                    if (isSelected) 0xFF0284C7.toInt() else 0xFF334155.toInt()
+                                )
+                            }
+                        }
+                    }
+                    wordsRow.addView(wordChip)
+                }
+                wordsScroll.addView(wordsRow)
+                card.addView(wordsScroll)
+            }
+        }
 
         // Replacement Text Label & Input
         val repLabel = TextView(context).apply {

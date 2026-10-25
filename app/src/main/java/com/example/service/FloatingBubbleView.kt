@@ -267,17 +267,19 @@ class FloatingBubbleView(
                     if (!isDragging) {
                         // Click event -> toggle menu
                         toggleMenu()
+                        applyOpacity(preferences.bubbleOpacity.value)
                     } else {
                         val hovered = deleteTargetView.isCurrentlyHovered()
                         deleteTargetView.hide()
+                        deleteTargetView.reset()
                         if (hovered) {
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                             animateDisappearAndDismiss()
                         } else {
                             snapToEdge()
+                            applyOpacity(preferences.bubbleOpacity.value)
                         }
                     }
-                    applyOpacity(preferences.bubbleOpacity.value)
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {

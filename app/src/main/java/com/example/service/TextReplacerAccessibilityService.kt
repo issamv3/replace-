@@ -65,13 +65,13 @@ class TextReplacerAccessibilityService : AccessibilityService() {
         autoApplyEngine?.start()
         floatingBubbleView?.updatePlayState(true)
 
-        // Observe bubble visibility and hotspot position
+        // Observe bubble visibility
         serviceScope.launch {
             preferences.isBubbleHidden.collect { hidden ->
                 withContext(Dispatchers.Main) {
                     if (hidden) {
                         floatingBubbleView?.hideBubble()
-                        hotspotTriggerView?.show()
+                        hotspotTriggerView?.hide()
                     } else {
                         hotspotTriggerView?.hide()
                         floatingBubbleView?.showBubble()
@@ -111,6 +111,8 @@ class TextReplacerAccessibilityService : AccessibilityService() {
                 onToggleAutoApplyClicked = { onToggleAutoApplyTriggered() },
                 onBubbleDismissed = {
                     preferences.setBubbleHidden(true)
+                    floatingBubbleView?.hideBubble()
+                    hotspotTriggerView?.hide()
                 }
             )
             try {
@@ -121,7 +123,7 @@ class TextReplacerAccessibilityService : AccessibilityService() {
             }
         }
 
-        // 3. Hotspot Trigger View (shown when bubble is hidden)
+        // 3. Hotspot Trigger View (shown only if explicitly configured)
         if (hotspotTriggerView == null) {
             val hotspot = HotspotTriggerView(
                 context = this,
@@ -136,7 +138,7 @@ class TextReplacerAccessibilityService : AccessibilityService() {
 
         if (preferences.isBubbleHidden.value) {
             floatingBubbleView?.hideBubble()
-            hotspotTriggerView?.show()
+            hotspotTriggerView?.hide()
         } else {
             hotspotTriggerView?.hide()
             floatingBubbleView?.showBubble()
@@ -325,18 +327,59 @@ class TextReplacerAccessibilityService : AccessibilityService() {
             if (tempRect.width() > 0 && tempRect.height() > 0) {
                 val density = resources.displayMetrics.density
                 val calculatedSizeSp = (tempRect.height() * 0.70f) / density
-                outItems.add(
-                    InspectableItem(
-                        text = effectiveText,
-                        bounds = Rect(tempRect),
-                        packageName = node.packageName?.toString(),
-                        viewId = node.viewIdResourceName,
-                        className = node.className?.toString(),
-                        textSizeSp = calculatedSizeSp,
-                        hasRealText = hasRealText,
-                        isLeaf = isLeaf
+                val words = effectiveText.split(Regex("\\s+")).filter { it.isNotBlank() }
+
+                if (words.size <= 1) {
+                    outItems.add(
+                        InspectableItem(
+                            text = effectiveText,
+                            bounds = Rect(tempRect),
+                            packageName = node.packageName?.toString(),
+                            viewId = node.viewIdResourceName,
+                            className = node.className?.toString(),
+                            textSizeSp = calculatedSizeSp,
+                            hasRealText = hasRealText,
+                            isLeaf = isLeaf,
+                            fullSentence = effectiveText
+                        )
                     )
-                )
+                } else {
+                    val totalChars = effectiveText.length.coerceAtLeast(1)
+                    var searchIndex = 0
+                    for (word in words) {
+                        val startChar = effectiveText.indexOf(word, searchIndex).coerceAtLeast(0)
+                        val endChar = (startChar + word.length).coerceAtMost(totalChars)
+                        searchIndex = endChar
+
+                        val startFraction = startChar.toFloat() / totalChars
+                        val endFraction = endChar.toFloat() / totalChars
+
+                        val wordLeft = tempRect.left + (tempRect.width() * startFraction).toInt()
+                        val wordRight = (tempRect.left + (tempRect.width() * endFraction).toInt())
+                            .coerceAtLeast(wordLeft + (16 * density).toInt())
+
+                        val wordBounds = Rect(
+                            wordLeft.coerceIn(tempRect.left, tempRect.right),
+                            tempRect.top,
+                            wordRight.coerceIn(wordLeft, tempRect.right),
+                            tempRect.bottom
+                        )
+
+                        outItems.add(
+                            InspectableItem(
+                                text = word,
+                                bounds = wordBounds,
+                                packageName = node.packageName?.toString(),
+                                viewId = node.viewIdResourceName,
+                                className = node.className?.toString(),
+                                textSizeSp = calculatedSizeSp,
+                                hasRealText = hasRealText,
+                                isLeaf = true,
+                                fullSentence = effectiveText
+                            )
+                        )
+                    }
+                }
             }
         }
 

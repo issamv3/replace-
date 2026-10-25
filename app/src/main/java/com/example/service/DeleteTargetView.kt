@@ -16,6 +16,7 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
@@ -149,33 +150,39 @@ class DeleteTargetView(
     }
 
     /**
-     * Checks if the floating bubble coordinates are within the drop-to-delete target zone.
+     * Checks if the floating coordinates are within the drop-to-delete target zone.
+     * Uses a generous detection radius and bottom-center zone to ensure easy dismissal.
      */
-    fun updateHover(bubbleRawX: Float, bubbleRawY: Float): Boolean {
+    fun updateHover(rawX: Float, rawY: Float): Boolean {
         val displayMetrics = DisplayMetrics()
         @Suppress("DEPRECATION")
         windowManager.defaultDisplay.getRealMetrics(displayMetrics)
         val screenWidth = displayMetrics.widthPixels
         val screenHeight = displayMetrics.heightPixels
 
-        // Center of the X target
+        // Center of the X target located at the bottom center
         val targetCenterX = screenWidth / 2f
-        val targetCenterY = screenHeight - (70 * density)
+        val targetCenterY = screenHeight - (75 * density)
 
-        val distance = hypot((bubbleRawX - targetCenterX).toDouble(), (bubbleRawY - targetCenterY).toDouble()).toFloat()
-        val hovering = distance <= hitRadiusPx
+        val distance = hypot((rawX - targetCenterX).toDouble(), (rawY - targetCenterY).toDouble()).toFloat()
+
+        // Generous detection: either close to the target center OR anywhere in the bottom-center drop zone
+        val inBottomZone = rawY >= (screenHeight - 170 * density) &&
+                abs(rawX - targetCenterX) <= (150 * density)
+
+        val hovering = distance <= (125 * density) || inBottomZone
 
         if (hovering != isHovered) {
             isHovered = hovering
             targetCircle.background = createCircleBackground(hovering)
             if (hovering) {
                 performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                targetCircle.animate().scaleX(1.25f).scaleY(1.25f).setDuration(120).start()
-                hintText.text = "Release to dismiss"
+                targetCircle.animate().scaleX(1.35f).scaleY(1.35f).setDuration(120).start()
+                hintText.text = "Release to delete from screen"
                 hintText.setTextColor(0xFFEF4444.toInt())
             } else {
                 targetCircle.animate().scaleX(1.0f).scaleY(1.0f).setDuration(120).start()
-                hintText.text = "Drag here to hide"
+                hintText.text = "Drag here to delete"
                 hintText.setTextColor(0xFFCBD5E1.toInt())
             }
         }
@@ -183,4 +190,11 @@ class DeleteTargetView(
     }
 
     fun isCurrentlyHovered(): Boolean = isHovered
+
+    fun reset() {
+        isHovered = false
+        targetCircle.scaleX = 1.0f
+        targetCircle.scaleY = 1.0f
+        targetCircle.background = createCircleBackground(false)
+    }
 }

@@ -227,11 +227,28 @@ class AutoApplyEngine(
             ) {
                 val matchedRule = findMatchingRuleFast(effectiveText, node, rules, exactRulesMap)
                 if (matchedRule != null) {
+                    val finalReplacementText = if (matchedRule.matchMode == ReplacementRule.MATCH_CONTAINS &&
+                        !effectiveText.trim().equals(matchedRule.originalText.trim(), ignoreCase = true)
+                    ) {
+                        try {
+                            effectiveText.replace(
+                                Regex("(?i)\\b" + Regex.escape(matchedRule.originalText) + "\\b"),
+                                matchedRule.replacementText
+                            ).ifEmpty {
+                                effectiveText.replace(matchedRule.originalText, matchedRule.replacementText, ignoreCase = true)
+                            }
+                        } catch (e: Exception) {
+                            effectiveText.replace(matchedRule.originalText, matchedRule.replacementText, ignoreCase = true)
+                        }
+                    } else {
+                        matchedRule.replacementText
+                    }
+
                     outCandidates.add(
                         ActiveTextPatch(
                             key = "rule_${matchedRule.id}_${tempRect.centerX()}_${tempRect.centerY()}",
                             bounds = Rect(tempRect),
-                            replacementText = matchedRule.replacementText,
+                            replacementText = finalReplacementText,
                             textColor = matchedRule.textColor,
                             backgroundColor = matchedRule.backgroundColor,
                             textSizeSp = matchedRule.textSizeSp,

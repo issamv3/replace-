@@ -79,12 +79,86 @@ class HotspotTriggerView(
         triggerButton.addView(triggerIcon)
         addView(triggerButton)
 
-        setOnClickListener {
-            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-            onHotspotTapped()
-        }
-
+        setupTouchListener()
         visibility = View.GONE
+    }
+
+    private val deleteTargetView = DeleteTargetView(context, windowManager)
+    private val touchSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+    private var initialX = 0
+    private var initialY = 0
+    private var initialTouchX = 0f
+    private var initialTouchY = 0f
+    private var isDragging = false
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupTouchListener() {
+        setOnTouchListener { _, event ->
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    initialX = layoutParamsWindow.x
+                    initialY = layoutParamsWindow.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    isDragging = false
+                    true
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - initialTouchX).toInt()
+                    val dy = (event.rawY - initialTouchY).toInt()
+
+                    if (kotlin.math.abs(dx) > touchSlop || kotlin.math.abs(dy) > touchSlop) {
+                        if (!isDragging) {
+                            isDragging = true
+                            deleteTargetView.show()
+                        }
+                    }
+
+                    if (isDragging) {
+                        // For TOP/START or TOP/END
+                        if ((layoutParamsWindow.gravity and Gravity.END) == Gravity.END) {
+                            layoutParamsWindow.x = initialX - dx
+                        } else {
+                            layoutParamsWindow.x = initialX + dx
+                        }
+                        layoutParamsWindow.y = initialY + dy
+
+                        try {
+                            windowManager.updateViewLayout(this, layoutParamsWindow)
+                        } catch (e: Exception) {
+                            // View might not be attached
+                        }
+
+                        val isHovered = deleteTargetView.updateHover(event.rawX, event.rawY)
+                        alpha = if (isHovered) 0.4f else 0.85f
+                    }
+                    true
+                }
+                android.view.MotionEvent.ACTION_UP -> {
+                    if (!isDragging) {
+                        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        onHotspotTapped()
+                    } else {
+                        val hovered = deleteTargetView.isCurrentlyHovered()
+                        deleteTargetView.hide()
+                        deleteTargetView.reset()
+                        if (hovered) {
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            hide()
+                        } else {
+                            alpha = 0.85f
+                        }
+                    }
+                    true
+                }
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    deleteTargetView.hide()
+                    alpha = 0.85f
+                    true
+                }
+                else -> false
+            }
+        }
     }
 
     fun applyPosition(positionKey: String) {
