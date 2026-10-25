@@ -114,7 +114,14 @@ class InspectionOverlayView(
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
-        )
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 0
+            y = 0
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
 
         setWillNotDraw(false)
         setupTopBanner()
@@ -447,16 +454,13 @@ class InspectionOverlayView(
                 cornerRadius = 14f * density
             }
             setOnClickListener {
-                val original = origEditText.text.toString().trim()
+                val original = origEditText.text.toString().trim().ifBlank { item.text.trim() }
                 val replacement = repEditText.text.toString().trim()
 
-                if (original.isNotBlank() || replacement.isNotBlank()) {
-                    val finalOriginal = original.ifBlank { replacement }
-                    val finalReplacement = replacement.ifBlank { original }
-
+                if (original.isNotBlank() && replacement.isNotBlank()) {
                     val rule = ReplacementRule(
-                        originalText = finalOriginal,
-                        replacementText = finalReplacement,
+                        originalText = original,
+                        replacementText = replacement,
                         packageName = item.packageName,
                         viewId = item.viewId,
                         className = item.className,

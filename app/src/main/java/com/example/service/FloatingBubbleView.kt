@@ -72,6 +72,9 @@ class FloatingBubbleView(
             gravity = Gravity.TOP or Gravity.START
             x = preferences.bubblePosX.value
             y = preferences.bubblePosY.value
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
         }
 
         clipChildren = false

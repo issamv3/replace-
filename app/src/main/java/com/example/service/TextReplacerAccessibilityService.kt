@@ -109,27 +109,74 @@ class TextReplacerAccessibilityService : AccessibilityService() {
         // Collapse bubble menu
         floatingBubbleView?.collapseMenu()
 
-        // Gather inspectable elements from active window tree
-        val rootNode = try {
-            rootInActiveWindow
+        // Gather inspectable elements across all active windows (supports multi-window & dialogs)
+        val rootsToScan = mutableListOf<AccessibilityNodeInfo>()
+        try {
+            val wins = windows
+            if (!wins.isNullOrEmpty()) {
+                for (w in wins) {
+                    val r = w.root
+                    if (r != null) rootsToScan.add(r)
+                }
+            }
         } catch (e: Exception) {
-            null
+            // Ignore
         }
 
-        val items = mutableListOf<InspectableItem>()
+        if (rootsToScan.isEmpty()) {
+            val r = try { rootInActiveWindow } catch (e: Exception) { null }
+            if (r != null) rootsToScan.add(r)
+        }
+
+        val rawItems = mutableListOf<InspectableItem>()
         val tempRect = Rect()
 
-        if (rootNode != null) {
-            collectInspectableNodes(rootNode, items, tempRect)
+        for (root in rootsToScan) {
+            collectInspectableNodes(root, rawItems, tempRect)
             try {
-                rootNode.recycle()
+                root.recycle()
             } catch (e: Exception) {
                 // Ignore
             }
         }
 
+        // Deduplicate overlapping items so only the clean leaf text elements are highlighted
+        val items = deduplicateInspectableItems(rawItems)
+
         // Capture screenshot to sample exact text & background colors
         captureScreenAndLaunchInspection(items)
+    }
+
+    private fun deduplicateInspectableItems(items: List<InspectableItem>): MutableList<InspectableItem> {
+        if (items.isEmpty()) return mutableListOf()
+        val sorted = items.sortedBy { it.bounds.width() * it.bounds.height() }
+        val accepted = mutableListOf<InspectableItem>()
+        for (item in sorted) {
+            val overlaps = accepted.any { existing ->
+                if (!Rect.intersects(item.bounds, existing.bounds)) {
+                    false
+                } else {
+                    val intersectLeft = Math.max(item.bounds.left, existing.bounds.left)
+                    val intersectTop = Math.max(item.bounds.top, existing.bounds.top)
+                    val intersectRight = Math.min(item.bounds.right, existing.bounds.right)
+                    val intersectBottom = Math.min(item.bounds.bottom, existing.bounds.bottom)
+                    val intersectArea = (intersectRight - intersectLeft).coerceAtLeast(0) *
+                            (intersectBottom - intersectTop).coerceAtLeast(0)
+
+                    val itemArea = item.bounds.width() * item.bounds.height()
+                    val existingArea = existing.bounds.width() * existing.bounds.height()
+                    val minArea = Math.min(itemArea, existingArea).coerceAtLeast(1)
+
+                    (intersectArea.toFloat() / minArea) > 0.30f ||
+                            (Math.abs(item.bounds.centerX() - existing.bounds.centerX()) < 24 &&
+                             Math.abs(item.bounds.centerY() - existing.bounds.centerY()) < 24)
+                }
+            }
+            if (!overlaps) {
+                accepted.add(item)
+            }
+        }
+        return accepted
     }
 
     private fun collectInspectableNodes(
