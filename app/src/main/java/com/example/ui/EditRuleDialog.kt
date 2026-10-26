@@ -63,6 +63,7 @@ fun EditRuleDialog(
     var textColor by remember { mutableIntStateOf(rule?.textColor ?: Color.White.toArgb()) }
     var backgroundColor by remember { mutableIntStateOf(rule?.backgroundColor ?: 0xFF0F172A.toInt()) }
     var widthScale by remember { mutableFloatStateOf(rule?.widthScale ?: 1.0f) }
+    var fontWeightValue by remember { mutableIntStateOf(rule?.fontWeight ?: 700) }
 
     val presetColors = listOf(
         0xFF0F172A.toInt(), // Slate 900
@@ -75,6 +76,16 @@ fun EditRuleDialog(
         0xFFE11D48.toInt(), // Rose
         0xFF8B5CF6.toInt()  // Violet
     )
+
+    val currentFontWeight = when (fontWeightValue) {
+        400 -> FontWeight.Normal
+        500 -> FontWeight.Medium
+        600 -> FontWeight.SemiBold
+        700 -> FontWeight.Bold
+        800 -> FontWeight.ExtraBold
+        900 -> FontWeight.Black
+        else -> FontWeight.Bold
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -95,7 +106,7 @@ fun EditRuleDialog(
                     value = originalText,
                     onValueChange = { originalText = it },
                     label = { Text("Original text (to replace)") },
-                    placeholder = { Text("e.g. $1,250.00") },
+                    placeholder = { Text("e.g. 2026-10-23 09:45") },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -108,7 +119,7 @@ fun EditRuleDialog(
                     value = replacementText,
                     onValueChange = { replacementText = it },
                     label = { Text("Replacement text") },
-                    placeholder = { Text("e.g. $1,000,000.00") },
+                    placeholder = { Text("e.g. 2026-10-25 10:30") },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -168,12 +179,62 @@ fun EditRuleDialog(
                         text = replacementText.ifBlank { originalText.ifBlank { "Preview Text" } },
                         color = Color(textColor),
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = currentFontWeight,
                         modifier = Modifier.graphicsLayer(scaleX = widthScale)
                     )
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "FONT WEIGHT / وزن الخط",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = when (fontWeightValue) {
+                            400 -> "Regular (400)"
+                            500 -> "Medium (500)"
+                            600 -> "SemiBold (600)"
+                            700 -> "Bold (700)"
+                            800 -> "ExtraBold (800)"
+                            900 -> "Black (900)"
+                            else -> "$fontWeightValue"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                }
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 12.dp)
+                ) {
+                    val weightList = listOf(
+                        400 to "Regular",
+                        500 to "Medium",
+                        600 to "SemiBold",
+                        700 to "Bold (عريض)",
+                        800 to "ExtraBold",
+                        900 to "Black (ثقيل)"
+                    )
+                    items(weightList) { (wVal, wLabel) ->
+                        FilterChip(
+                            selected = fontWeightValue == wVal,
+                            onClick = { fontWeightValue = wVal },
+                            label = { Text(wLabel, fontSize = 11.sp) }
+                        )
+                    }
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -297,7 +358,9 @@ fun EditRuleDialog(
                             matchMode = matchMode,
                             textColor = textColor,
                             backgroundColor = backgroundColor,
-                            widthScale = widthScale
+                            widthScale = widthScale,
+                            fontWeight = fontWeightValue,
+                            isBold = fontWeightValue >= 600
                         )
                         onSave(updated)
                         onDismiss()

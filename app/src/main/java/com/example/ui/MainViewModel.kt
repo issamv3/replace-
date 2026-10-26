@@ -124,25 +124,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val samples = listOf(
                 ReplacementRule(
+                    originalText = "2026-10-23 09:45",
+                    replacementText = "2026-10-25 18:30",
+                    textColor = 0xFF38BDF8.toInt(), // Sky Blue
+                    backgroundColor = 0xFF0F172A.toInt(), // Dark Slate
+                    matchMode = ReplacementRule.MATCH_CONTAINS,
+                    fontWeight = 700,
+                    isBold = true
+                ),
+                ReplacementRule(
                     originalText = "$1,250.00",
                     replacementText = "$1,000,000.00",
                     textColor = 0xFF10B981.toInt(), // Emerald Green
                     backgroundColor = 0xFF0F172A.toInt(), // Dark Slate
-                    matchMode = ReplacementRule.MATCH_EXACT
+                    matchMode = ReplacementRule.MATCH_EXACT,
+                    fontWeight = 700,
+                    isBold = true
                 ),
                 ReplacementRule(
                     originalText = "Standard Member",
                     replacementText = "VIP Elite Investor",
                     textColor = 0xFFF59E0B.toInt(), // Amber Gold
                     backgroundColor = 0xFF1E293B.toInt(),
-                    matchMode = ReplacementRule.MATCH_CONTAINS
-                ),
-                ReplacementRule(
-                    originalText = "Breaking News",
-                    replacementText = "⭐ Important Update",
-                    textColor = 0xFF38BDF8.toInt(), // Sky Blue
-                    backgroundColor = 0xFF0369A1.toInt(),
-                    matchMode = ReplacementRule.MATCH_CONTAINS
+                    matchMode = ReplacementRule.MATCH_CONTAINS,
+                    fontWeight = 700,
+                    isBold = true
                 )
             )
             for (rule in samples) {

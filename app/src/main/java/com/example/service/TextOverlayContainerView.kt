@@ -2,7 +2,6 @@ package com.example.service
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -11,6 +10,7 @@ import android.os.Build
 import android.view.View
 import android.view.WindowManager
 import kotlin.math.max
+import kotlin.math.min
 
 data class ActiveTextPatch(
     val key: String,
@@ -23,13 +23,20 @@ data class ActiveTextPatch(
     val isBold: Boolean = false,
     val isItalic: Boolean = false,
     val hasRealText: Boolean = true,
-    val className: String? = null
+    val className: String? = null,
+    val fontWeight: Int = 700,
+    val opticalHeight: Float = 0f,
+    val opticalWidth: Float = 0f,
+    val opticalCenterY: Float = 0f
 )
 
 /**
  * High-performance full-screen non-touchable overlay canvas that renders active text patches.
- * It dynamically tracks on-screen text nodes with zero lag, erases original text using the
- * sampled background color, and renders replacement text with exact font size, colors, and width scaling.
+ * Uses advanced typography calibration:
+ * 1. Matches exact original font weight (Regular 400 to Black 900) and stroke thickness.
+ * 2. Matches exact optical glyph height (cap-height) so numbers are neither too big nor too small.
+ * 3. Matches exact original width using proportional textScaleX.
+ * 4. Aligns precisely to the original text's baseline and optical center.
  */
 class TextOverlayContainerView(
     context: Context,
@@ -43,8 +50,13 @@ class TextOverlayContainerView(
         style = Paint.Style.FILL
     }
 
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG)
+    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+        style = Paint.Style.STROKE
+    }
+
     private val drawBounds = Rect()
+    private val measuredGlyphBounds = Rect()
 
     val layoutParamsWindow: WindowManager.LayoutParams
 
@@ -98,51 +110,98 @@ class TextOverlayContainerView(
             val bounds = patch.bounds
             if (bounds.width() <= 0 || bounds.height() <= 0) continue
 
-            // 1. Fill over original text using sampled background color (erases it completely)
+            // 1. Fill over original text using sampled background color (cleanly covers old text)
             bgPaint.color = patch.backgroundColor
             drawBounds.set(bounds)
+            // Add 1px margin around bounds to avoid any pixel leakage of original text
+            drawBounds.inset(-1, -1)
             canvas.drawRect(drawBounds, bgPaint)
 
-            // 2. Configure font style
-            textPaint.color = patch.textColor
-            val typefaceStyle = when {
-                patch.isBold && patch.isItalic -> Typeface.BOLD_ITALIC
-                patch.isBold -> Typeface.BOLD
-                patch.isItalic -> Typeface.ITALIC
-                else -> Typeface.NORMAL
-            }
-            textPaint.typeface = Typeface.create(Typeface.DEFAULT, typefaceStyle)
-
-            // 3. User-controlled text width scale (from rule settings):
-            textPaint.textScaleX = patch.widthScale.coerceIn(0.3f, 3.0f)
-
-            // 4. Exact font size matching original text height:
-            val targetSizePx = (bounds.height() * 0.72f).coerceAtLeast(6f * density)
-            textPaint.textSize = targetSizePx
-
-            // If user did not customize widthScale (widthScale == 1.0f), auto-fit if replacement is longer
-            val availableWidth = max(6f, bounds.width() - 4f * density)
-            val measuredWidth = textPaint.measureText(patch.replacementText)
-            if (patch.widthScale == 1.0f && measuredWidth > availableWidth && measuredWidth > 0) {
-                val scale = availableWidth / measuredWidth
-                textPaint.textSize = max(6f * density, targetSizePx * scale)
-            }
-
-            // Vertical centering calculation within bounds
-            val fontMetrics = textPaint.fontMetrics
-            val centerY = bounds.centerY() - (fontMetrics.ascent + fontMetrics.descent) / 2f
-
-            // Alignment: if box is wide (left-aligned text), align left with padding; otherwise center
-            val currentTextWidth = textPaint.measureText(patch.replacementText)
-            if (availableWidth > currentTextWidth * 1.35f) {
-                textPaint.textAlign = Paint.Align.LEFT
-                val startX = bounds.left + 4f * density
-                canvas.drawText(patch.replacementText, startX, centerY, textPaint)
+            // 2. Exact Font Weight (وزن الخط) Configuration
+            val weight = patch.fontWeight.coerceIn(100, 1000)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                textPaint.typeface = Typeface.create(Typeface.DEFAULT, weight, patch.isItalic)
             } else {
-                textPaint.textAlign = Paint.Align.CENTER
-                val centerX = bounds.centerX().toFloat()
-                canvas.drawText(patch.replacementText, centerX, centerY, textPaint)
+                val style = when {
+                    (weight >= 600 || patch.isBold) && patch.isItalic -> Typeface.BOLD_ITALIC
+                    weight >= 600 || patch.isBold -> Typeface.BOLD
+                    patch.isItalic -> Typeface.ITALIC
+                    else -> Typeface.NORMAL
+                }
+                textPaint.typeface = Typeface.create(Typeface.DEFAULT, style)
             }
+
+            // Ensure heavy/bold weights are thick and never thin (رقيق)
+            textPaint.isFakeBoldText = (weight >= 600 || patch.isBold)
+            textPaint.color = patch.textColor
+
+            // 3. Exact Font Size Matching (Cap-height calibration)
+            // Target physical digit height:
+            val targetInkHeight = if (patch.opticalHeight > 0f) {
+                patch.opticalHeight
+            } else {
+                bounds.height() * 0.72f
+            }.coerceAtLeast(6f * density)
+
+            // Calibrate text size so glyphs equal targetInkHeight
+            var initialSize = targetInkHeight * 1.35f
+            textPaint.textSize = initialSize
+            textPaint.textScaleX = 1.0f
+
+            textPaint.getTextBounds("20260945", 0, 8, measuredGlyphBounds)
+            val currentGlyphHeight = measuredGlyphBounds.height().toFloat()
+            if (currentGlyphHeight > 0f) {
+                val heightRatio = targetInkHeight / currentGlyphHeight
+                initialSize = (initialSize * heightRatio).coerceAtLeast(6f * density)
+                textPaint.textSize = initialSize
+            }
+
+            // 4. Exact Text Width Matching (عرض النص)
+            val availableWidth = bounds.width().toFloat()
+            val naturalTextWidth = textPaint.measureText(patch.replacementText)
+
+            val autoWidthScale = if (naturalTextWidth > 0f && availableWidth > 0f) {
+                // Proportional scale to span exact original width
+                (availableWidth / naturalTextWidth).coerceIn(0.5f, 2.2f)
+            } else 1.0f
+
+            // Combine auto-fit width with user's widthScale setting
+            val effectiveScaleX = autoWidthScale * patch.widthScale
+            textPaint.textScaleX = effectiveScaleX.coerceIn(0.3f, 3.0f)
+
+            // 5. Exact Vertical Alignment & Baseline Calculation (المكان بالضبط)
+            textPaint.getTextBounds(patch.replacementText, 0, patch.replacementText.length, measuredGlyphBounds)
+            val glyphCenterY = (measuredGlyphBounds.top + measuredGlyphBounds.bottom) / 2f
+            val targetCenterY = if (patch.opticalCenterY > 0f) {
+                patch.opticalCenterY
+            } else {
+                bounds.centerY().toFloat()
+            }
+            val baselineY = targetCenterY - glyphCenterY
+
+            // 6. Stroke simulation for Extra Bold / Black weights (800 - 900) if requested
+            if (weight >= 800) {
+                strokePaint.color = patch.textColor
+                strokePaint.typeface = textPaint.typeface
+                strokePaint.textSize = textPaint.textSize
+                strokePaint.textScaleX = textPaint.textScaleX
+                strokePaint.strokeWidth = ((weight - 700) / 300f * density).coerceIn(0.6f * density, 2.5f * density)
+            }
+
+            // 7. Horizontal Placement
+            val finalRenderedWidth = textPaint.measureText(patch.replacementText)
+            val startX = bounds.left + (availableWidth - finalRenderedWidth) / 2f
+
+            textPaint.textAlign = Paint.Align.LEFT
+            strokePaint.textAlign = Paint.Align.LEFT
+
+            // Draw stroke outline first if extra-heavy
+            if (weight >= 800) {
+                canvas.drawText(patch.replacementText, startX, baselineY, strokePaint)
+            }
+
+            // Draw main text
+            canvas.drawText(patch.replacementText, startX, baselineY, textPaint)
         }
     }
 }

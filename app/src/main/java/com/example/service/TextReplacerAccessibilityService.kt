@@ -327,58 +327,34 @@ class TextReplacerAccessibilityService : AccessibilityService() {
             if (tempRect.width() > 0 && tempRect.height() > 0) {
                 val density = resources.displayMetrics.density
                 val calculatedSizeSp = (tempRect.height() * 0.70f) / density
-                val words = effectiveText.split(Regex("\\s+")).filter { it.isNotBlank() }
 
-                if (words.size <= 1) {
+                val textSpanned = node.text
+                var isBoldNode = false
+                if (textSpanned is android.text.Spanned) {
+                    val styleSpans = textSpanned.getSpans(0, textSpanned.length, android.text.style.StyleSpan::class.java)
+                    if (styleSpans.any { it.style == android.graphics.Typeface.BOLD || it.style == android.graphics.Typeface.BOLD_ITALIC }) {
+                        isBoldNode = true
+                    }
+                }
+
+                // Specifically detect dates/timestamps like 2026-10-23 09:45
+                val dateMatches = DateDetector.findDates(effectiveText, tempRect, density)
+                for (dateMatch in dateMatches) {
                     outItems.add(
                         InspectableItem(
-                            text = effectiveText,
-                            bounds = Rect(tempRect),
+                            text = dateMatch.dateText,
+                            bounds = dateMatch.bounds,
                             packageName = node.packageName?.toString(),
                             viewId = node.viewIdResourceName,
                             className = node.className?.toString(),
                             textSizeSp = calculatedSizeSp,
                             hasRealText = hasRealText,
-                            isLeaf = isLeaf,
+                            isLeaf = true,
+                            isBold = isBoldNode,
+                            fontWeight = if (isBoldNode) 700 else 700,
                             fullSentence = effectiveText
                         )
                     )
-                } else {
-                    val totalChars = effectiveText.length.coerceAtLeast(1)
-                    var searchIndex = 0
-                    for (word in words) {
-                        val startChar = effectiveText.indexOf(word, searchIndex).coerceAtLeast(0)
-                        val endChar = (startChar + word.length).coerceAtMost(totalChars)
-                        searchIndex = endChar
-
-                        val startFraction = startChar.toFloat() / totalChars
-                        val endFraction = endChar.toFloat() / totalChars
-
-                        val wordLeft = tempRect.left + (tempRect.width() * startFraction).toInt()
-                        val wordRight = (tempRect.left + (tempRect.width() * endFraction).toInt())
-                            .coerceAtLeast(wordLeft + (16 * density).toInt())
-
-                        val wordBounds = Rect(
-                            wordLeft.coerceIn(tempRect.left, tempRect.right),
-                            tempRect.top,
-                            wordRight.coerceIn(wordLeft, tempRect.right),
-                            tempRect.bottom
-                        )
-
-                        outItems.add(
-                            InspectableItem(
-                                text = word,
-                                bounds = wordBounds,
-                                packageName = node.packageName?.toString(),
-                                viewId = node.viewIdResourceName,
-                                className = node.className?.toString(),
-                                textSizeSp = calculatedSizeSp,
-                                hasRealText = hasRealText,
-                                isLeaf = true,
-                                fullSentence = effectiveText
-                            )
-                        )
-                    }
                 }
             }
         }
@@ -432,20 +408,23 @@ class TextReplacerAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             // If OCR fallback is enabled and we have a bitmap, supplement any texts missed by accessibility tree
             if (preferences.ocrFallbackEnabled.value && bitmap != null) {
+                val density = resources.displayMetrics.density
                 val ocrBlocks = OcrFallbackHelper.recognizeText(bitmap)
                 for (block in ocrBlocks) {
-                    if (block.text.isNotBlank() &&
-                        items.none { it.bounds.contains(block.bounds.centerX(), block.bounds.centerY()) }
-                    ) {
-                        items.add(
-                            InspectableItem(
-                                text = block.text,
-                                bounds = block.bounds,
-                                packageName = null,
-                                hasRealText = true,
-                                isLeaf = true
+                    val dateMatches = DateDetector.findDates(block.text, block.bounds, density)
+                    for (d in dateMatches) {
+                        if (items.none { it.bounds.contains(d.bounds.centerX(), d.bounds.centerY()) }) {
+                            items.add(
+                                InspectableItem(
+                                    text = d.dateText,
+                                    bounds = d.bounds,
+                                    packageName = null,
+                                    hasRealText = true,
+                                    isLeaf = true,
+                                    fullSentence = block.text
+                                )
                             )
-                        )
+                        }
                     }
                 }
             }

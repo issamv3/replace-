@@ -227,36 +227,52 @@ class AutoApplyEngine(
             ) {
                 val matchedRule = findMatchingRuleFast(effectiveText, node, rules, exactRulesMap)
                 if (matchedRule != null) {
-                    val finalReplacementText = if (matchedRule.matchMode == ReplacementRule.MATCH_CONTAINS &&
-                        !effectiveText.trim().equals(matchedRule.originalText.trim(), ignoreCase = true)
-                    ) {
-                        try {
-                            effectiveText.replace(
-                                Regex("(?i)\\b" + Regex.escape(matchedRule.originalText) + "\\b"),
-                                matchedRule.replacementText
-                            ).ifEmpty {
-                                effectiveText.replace(matchedRule.originalText, matchedRule.replacementText, ignoreCase = true)
-                            }
-                        } catch (e: Exception) {
-                            effectiveText.replace(matchedRule.originalText, matchedRule.replacementText, ignoreCase = true)
-                        }
+                    val density = service.resources.displayMetrics.density
+
+                    // Calculate the exact bounds of the date alone so surrounding text is preserved
+                    val patchBounds = if (!effectiveText.trim().equals(matchedRule.originalText.trim(), ignoreCase = true)) {
+                        DateDetector.calculateDateSubBounds(
+                            fullText = effectiveText,
+                            targetDate = matchedRule.originalText,
+                            parentBounds = tempRect,
+                            density = density
+                        )
                     } else {
-                        matchedRule.replacementText
+                        Rect(tempRect)
+                    }
+
+                    val textSpanned = node.text
+                    var isBoldNode = false
+                    if (textSpanned is android.text.Spanned) {
+                        val styleSpans = textSpanned.getSpans(0, textSpanned.length, android.text.style.StyleSpan::class.java)
+                        if (styleSpans.any { it.style == android.graphics.Typeface.BOLD || it.style == android.graphics.Typeface.BOLD_ITALIC }) {
+                            isBoldNode = true
+                        }
+                    }
+
+                    val effectiveWeight = when {
+                        matchedRule.fontWeight > 0 -> matchedRule.fontWeight
+                        isBoldNode || matchedRule.isBold -> 700
+                        else -> 700
                     }
 
                     outCandidates.add(
                         ActiveTextPatch(
-                            key = "rule_${matchedRule.id}_${tempRect.centerX()}_${tempRect.centerY()}",
-                            bounds = Rect(tempRect),
-                            replacementText = finalReplacementText,
+                            key = "rule_${matchedRule.id}_${patchBounds.left}_${patchBounds.top}",
+                            bounds = patchBounds,
+                            replacementText = matchedRule.replacementText,
                             textColor = matchedRule.textColor,
                             backgroundColor = matchedRule.backgroundColor,
-                            textSizeSp = matchedRule.textSizeSp,
+                            textSizeSp = if (matchedRule.textSizeSp > 0f) matchedRule.textSizeSp else (patchBounds.height() * 0.70f) / density,
                             widthScale = matchedRule.widthScale,
-                            isBold = matchedRule.isBold,
+                            isBold = effectiveWeight >= 600,
                             isItalic = matchedRule.isItalic,
                             hasRealText = hasRealText,
-                            className = cls
+                            className = cls,
+                            fontWeight = effectiveWeight,
+                            opticalHeight = (patchBounds.height() * 0.72f),
+                            opticalWidth = patchBounds.width().toFloat(),
+                            opticalCenterY = patchBounds.centerY().toFloat()
                         )
                     )
                 }

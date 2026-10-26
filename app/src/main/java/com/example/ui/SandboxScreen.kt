@@ -80,7 +80,7 @@ fun SandboxScreen(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "1. Tap the floating icon on your screen edge.\n2. Tap '+' to inspect text and highlight elements.\n3. Tap any text below (e.g. '$1,250.00') to replace it!\n4. Or tap '▶' to test automatic real-time replacement.",
+                        text = "1. Tap the floating '⇄' icon on your screen edge.\n2. Tap '+' to inspect dates (e.g. 2026-10-23 09:45).\n3. Tap any detected date to edit and replace it!\n4. Tap '▶' to toggle automatic real-time replacement.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f),
                         lineHeight = 20.sp
@@ -103,6 +103,77 @@ fun SandboxScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Pre-load Demo Rules")
                     }
+                }
+            }
+        }
+
+        // Demo Card: Date & Timestamp Test
+        item {
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF0F172A)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("demo_date_card")
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Timestamp Detection Target",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF0369A1)
+                        ) {
+                            Text(
+                                text = "TARGET FORMAT",
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Text(
+                        text = "Heavy / Bold Date (عريض):",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "2026-10-23 09:45",
+                        color = Color.White,
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Black
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "Regular Date in sentence (عادي):",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 11.sp
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Last verified on 2026-10-23 09:45 by system server.",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp
+                    )
                 }
             }
         }

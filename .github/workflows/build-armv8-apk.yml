@@ -17,6 +17,9 @@ on:
           - debug
           - release
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build ARMv8 (arm64-v8a) APK
@@ -74,15 +77,38 @@ jobs:
       - name: Locate and Prepare APK
         run: |
           mkdir -p output_apk
-          APK_FILE=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1)
-          if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
-            echo "Found APK: $APK_FILE"
-            cp "$APK_FILE" output_apk/TextShift-arm64-v8a.apk
-            cp "$APK_FILE" output_apk/TextShift-Universal.apk
-          else
+          echo "Locating built APK files:"
+          find app/build/outputs/apk -type f -name "*.apk"
+
+          # Copy individual build APKs
+          for apk in $(find app/build/outputs/apk -type f -name "*.apk"); do
+            base_name=$(basename "$apk")
+            cp "$apk" "output_apk/$base_name"
+          done
+
+          # Standardize user-friendly APK names
+          ARM_APK=$(find app/build/outputs/apk -type f -name "*arm64-v8a*.apk" | head -n 1)
+          if [ -n "$ARM_APK" ]; then
+            cp "$ARM_APK" output_apk/TextShift-arm64-v8a.apk
+          fi
+
+          UNIVERSAL_APK=$(find app/build/outputs/apk -type f -name "*universal*.apk" | head -n 1)
+          if [ -n "$UNIVERSAL_APK" ]; then
+            cp "$UNIVERSAL_APK" output_apk/TextShift-Universal.apk
+          fi
+
+          FIRST_APK=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1)
+          if [ -z "$FIRST_APK" ]; then
             echo "ERROR: No APK found!"
             exit 1
           fi
+
+          if [ ! -f "output_apk/TextShift-arm64-v8a.apk" ]; then
+            cp "$FIRST_APK" output_apk/TextShift-arm64-v8a.apk
+          fi
+
+          echo "Prepared APKs in output_apk:"
+          ls -la output_apk
 
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
@@ -92,11 +118,38 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Create GitHub Release on Tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Determine Release Tag and Details
+        id: release_info
+        if: github.event_name != 'pull_request'
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            RELEASE_NAME="TextShift Release $TAG_NAME"
+          else
+            TAG_NAME="v1.0.${{ github.run_number }}"
+            RELEASE_NAME="TextShift Release v1.0.${{ github.run_number }}"
+          fi
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "release_name=$RELEASE_NAME" >> $GITHUB_OUTPUT
+
+      - name: Publish APK to GitHub Releases
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          files: output_apk/TextShift-arm64-v8a.apk
+          tag_name: ${{ steps.release_info.outputs.tag_name }}
+          name: ${{ steps.release_info.outputs.release_name }}
+          files: output_apk/*.apk
           generate_release_notes: true
+          make_latest: true
+          body: |
+            ### 🚀 TextShift APK Download
+            
+            - **`TextShift-arm64-v8a.apk`**: Optimized for modern Android smartphones (ARM64-v8a).
+            - **`TextShift-Universal.apk`**: Compatible across all supported Android architectures.
+            
+            #### Features:
+            - Date & Timestamp selective inspection (`2026-10-23 09:45`)
+            - Real-time text replacement preserving surrounding text, font styling, and colors
+            - Accessibility service & floating overlays
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -27,6 +27,7 @@ data class ReplacementRule(
     val boundsRight: Int = 0,
     val boundsBottom: Int = 0,
     val widthScale: Float = 1.0f,
+    val fontWeight: Int = 700,
     val lastUsedTimestamp: Long = System.currentTimeMillis(),
     val createdAt: Long = System.currentTimeMillis()
 ) {

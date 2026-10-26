@@ -43,7 +43,8 @@ data class InspectableItem(
     val isLeaf: Boolean = true,
     val isBold: Boolean = false,
     val isItalic: Boolean = false,
-    val fullSentence: String? = null
+    val fullSentence: String? = null,
+    val fontWeight: Int = 700
 )
 
 @SuppressLint("ViewConstructor")
@@ -160,6 +161,28 @@ class InspectionOverlayView(
             }
         }
         addView(closeBtn)
+
+        if (inspectableItems.isEmpty()) {
+            val emptyBadge = TextView(context).apply {
+                text = "No dates found (format: 2026-10-23 09:45)"
+                setTextColor(Color.WHITE)
+                textSize = 12f
+                val padH = (16 * density).roundToInt()
+                val padV = (8 * density).roundToInt()
+                setPadding(padH, padV, padH, padV)
+                background = GradientDrawable().apply {
+                    setColor(0xEE0F172A.toInt())
+                    cornerRadius = 16f * density
+                    setStroke((1f * density).roundToInt(), 0xFF475569.toInt())
+                }
+                val lpEmpty = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                    gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                    bottomMargin = (32 * density).roundToInt()
+                }
+                layoutParams = lpEmpty
+            }
+            addView(emptyBadge)
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -271,12 +294,13 @@ class InspectionOverlayView(
     }
 
     private fun openReplacementDialog(item: InspectableItem) {
-        // Sample colors from screenshot
-        val colors = ColorSampler.sample(screenshotBitmap, item.bounds)
-        var selectedBgColor = colors.backgroundColor
-        var selectedTextColor = colors.textColor
+        // Run advanced optical and typography analysis on the screenshot
+        val analysis = TextVisualAnalyzer.analyze(screenshotBitmap, item.bounds)
+        var selectedBgColor = analysis.backgroundColor
+        var selectedTextColor = analysis.textColor
+        var selectedFontWeight = if (item.fontWeight != 700 && item.fontWeight != 400) item.fontWeight else analysis.fontWeight
         val isPartOfSentence = !item.fullSentence.isNullOrBlank() && item.fullSentence.trim() != item.text.trim()
-        var selectedMatchMode = if (isPartOfSentence) ReplacementRule.MATCH_CONTAINS else ReplacementRule.MATCH_EXACT
+        val selectedMatchMode = if (isPartOfSentence) ReplacementRule.MATCH_CONTAINS else ReplacementRule.MATCH_EXACT
 
         val dialogContainer = FrameLayout(context).apply {
             setBackgroundColor(Color.argb(160, 0, 0, 0))
@@ -298,7 +322,7 @@ class InspectionOverlayView(
 
         // Title
         val titleText = TextView(context).apply {
-            text = "Replace Word / Text"
+            text = "Replace Date / Timestamp"
             textSize = 20f
             setTextColor(Color.WHITE)
             paint.isFakeBoldText = true
@@ -307,12 +331,10 @@ class InspectionOverlayView(
 
         // Subtitle / context
         val subText = TextView(context).apply {
-            text = if (!item.fullSentence.isNullOrBlank()) {
+            text = if (!item.fullSentence.isNullOrBlank() && item.fullSentence != item.text) {
                 "In: \"${item.fullSentence}\""
-            } else if (!item.packageName.isNullOrBlank()) {
-                "App: ${item.packageName}"
             } else {
-                "Screen Text Element"
+                "Detected: \"${item.text}\""
             }
             textSize = 12f
             setTextColor(0xFF94A3B8.toInt())
@@ -320,9 +342,9 @@ class InspectionOverlayView(
         }
         card.addView(subText)
 
-        // Original Text Label & Input
+        // Original Date Label & Input
         val origLabel = TextView(context).apply {
-            text = "TARGET WORD"
+            text = "ORIGINAL DATE"
             textSize = 11f
             setTextColor(0xFF38BDF8.toInt())
             paint.isFakeBoldText = true
@@ -339,59 +361,9 @@ class InspectionOverlayView(
         }
         card.addView(origEditText)
 
-        // If part of sentence, show word chips so user can switch words easily
-        if (!item.fullSentence.isNullOrBlank()) {
-            val sentenceWords = item.fullSentence.split(Regex("\\s+")).filter { it.isNotBlank() }
-            if (sentenceWords.size > 1) {
-                val wordsScroll = HorizontalScrollView(context).apply {
-                    isHorizontalScrollBarEnabled = false
-                    setPadding(0, (6 * density).roundToInt(), 0, (8 * density).roundToInt())
-                }
-                val wordsRow = LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                }
-                for (w in sentenceWords) {
-                    val wordChip = TextView(context).apply {
-                        text = w
-                        textSize = 12f
-                        setTextColor(if (w == item.text) Color.WHITE else 0xFF94A3B8.toInt())
-                        val padH = (10 * density).roundToInt()
-                        val padV = (5 * density).roundToInt()
-                        setPadding(padH, padV, padH, padV)
-                        background = GradientDrawable().apply {
-                            setColor(if (w == item.text) 0xFF0284C7.toInt() else 0xFF334155.toInt())
-                            cornerRadius = 12f * density
-                        }
-                        val lpWord = LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.WRAP_CONTENT,
-                            LinearLayout.LayoutParams.WRAP_CONTENT
-                        ).apply {
-                            marginEnd = (6 * density).roundToInt()
-                        }
-                        layoutParams = lpWord
-                        setOnClickListener {
-                            origEditText.setText(w)
-                            selectedMatchMode = ReplacementRule.MATCH_CONTAINS
-                            for (c in 0 until wordsRow.childCount) {
-                                val otherChip = wordsRow.getChildAt(c) as? TextView ?: continue
-                                val isSelected = otherChip.text == w
-                                otherChip.setTextColor(if (isSelected) Color.WHITE else 0xFF94A3B8.toInt())
-                                (otherChip.background as? GradientDrawable)?.setColor(
-                                    if (isSelected) 0xFF0284C7.toInt() else 0xFF334155.toInt()
-                                )
-                            }
-                        }
-                    }
-                    wordsRow.addView(wordChip)
-                }
-                wordsScroll.addView(wordsRow)
-                card.addView(wordsScroll)
-            }
-        }
-
-        // Replacement Text Label & Input
+        // Replacement Date Label & Input
         val repLabel = TextView(context).apply {
-            text = "REPLACEMENT TEXT"
+            text = "NEW DATE"
             textSize = 11f
             setTextColor(0xFF34D399.toInt())
             paint.isFakeBoldText = true
@@ -400,7 +372,7 @@ class InspectionOverlayView(
         card.addView(repLabel)
 
         val repEditText = EditText(context).apply {
-            hint = "Enter new text..."
+            hint = "e.g. 2026-10-25 10:30"
             setHintTextColor(0xFF64748B.toInt())
             setTextColor(Color.WHITE)
             textSize = 15f
@@ -411,13 +383,58 @@ class InspectionOverlayView(
         }
         card.addView(repEditText)
 
+        // Quick Date Adjuster Action Chips
+        val quickDateScroll = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            setPadding(0, (8 * density).roundToInt(), 0, (4 * density).roundToInt())
+        }
+        val quickDateRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+
+        val quickActions = listOf(
+            "Now" to { DateDetector.getCurrentDateTimeString() },
+            "+1 Hour" to { DateDetector.adjustDate(repEditText.text.toString().ifBlank { origEditText.text.toString() }, java.util.Calendar.HOUR_OF_DAY, 1) },
+            "+1 Day" to { DateDetector.adjustDate(repEditText.text.toString().ifBlank { origEditText.text.toString() }, java.util.Calendar.DAY_OF_YEAR, 1) },
+            "+1 Year" to { DateDetector.adjustDate(repEditText.text.toString().ifBlank { origEditText.text.toString() }, java.util.Calendar.YEAR, 1) }
+        )
+
+        for ((actionLabel, actionLambda) in quickActions) {
+            val chip = Button(context).apply {
+                text = actionLabel
+                textSize = 11f
+                setTextColor(Color.WHITE)
+                background = GradientDrawable().apply {
+                    setColor(0xFF0284C7.toInt())
+                    cornerRadius = 10f * density
+                }
+                val padChip = (6 * density).roundToInt()
+                setPadding(padChip, padChip, padChip, padChip)
+                val lpChip = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    (32 * density).roundToInt()
+                ).apply {
+                    marginEnd = (6 * density).roundToInt()
+                }
+                layoutParams = lpChip
+                setOnClickListener {
+                    val resultDate = actionLambda()
+                    repEditText.setText(resultDate)
+                    repEditText.setSelection(resultDate.length)
+                }
+            }
+            quickDateRow.addView(chip)
+        }
+        quickDateScroll.addView(quickDateRow)
+        card.addView(quickDateScroll)
+
         // Live Preview Box
         val previewLabel = TextView(context).apply {
             text = "VISUAL PREVIEW"
             textSize = 11f
             setTextColor(0xFF94A3B8.toInt())
             paint.isFakeBoldText = true
-            setPadding(0, (12 * density).roundToInt(), 0, (4 * density).roundToInt())
+            setPadding(0, (10 * density).roundToInt(), 0, (4 * density).roundToInt())
         }
         card.addView(previewLabel)
 
@@ -436,6 +453,12 @@ class InspectionOverlayView(
                 cornerRadius = 8f * density
                 setStroke((1f * density).roundToInt(), 0xFF475569.toInt())
             }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, selectedFontWeight, false)
+            } else {
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, if (selectedFontWeight >= 600) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+            }
+            paint.isFakeBoldText = (selectedFontWeight >= 600)
         }
         card.addView(previewBox)
 
@@ -447,14 +470,124 @@ class InspectionOverlayView(
             override fun afterTextChanged(s: Editable?) {}
         })
 
-        // Text Width Control (Slider & Presets)
-        val widthHeader = LinearLayout(context).apply {
+        // Font Weight / Boldness Section
+        val weightHeader = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, (10 * density).roundToInt(), 0, (2 * density).roundToInt())
         }
+        val weightTitleLabel = TextView(context).apply {
+            text = "FONT WEIGHT / وزن الخط"
+            textSize = 11f
+            setTextColor(0xFF38BDF8.toInt())
+            paint.isFakeBoldText = true
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val weightValueLabel = TextView(context).apply {
+            val name = when (selectedFontWeight) {
+                400 -> "Regular (400)"
+                500 -> "Medium (500)"
+                600 -> "SemiBold (600)"
+                700 -> "Bold (700)"
+                800 -> "ExtraBold (800)"
+                900 -> "Black (900)"
+                else -> "$selectedFontWeight"
+            }
+            text = name
+            textSize = 11f
+            setTextColor(0xFF34D399.toInt())
+            paint.isFakeBoldText = true
+        }
+        weightHeader.addView(weightTitleLabel)
+        weightHeader.addView(weightValueLabel)
+        card.addView(weightHeader)
+
+        // Font weight chips (Regular 400, Medium 500, SemiBold 600, Bold 700, ExtraBold 800, Black 900)
+        val weightScroll = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            setPadding(0, (2 * density).roundToInt(), 0, (6 * density).roundToInt())
+        }
+        val weightRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        val weightButtons = mutableListOf<Button>()
+
+        fun updateWeightUI(newWeight: Int) {
+            selectedFontWeight = newWeight
+            val name = when (newWeight) {
+                400 -> "Regular (400)"
+                500 -> "Medium (500)"
+                600 -> "SemiBold (600)"
+                700 -> "Bold (700)"
+                800 -> "ExtraBold (800)"
+                900 -> "Black (900)"
+                else -> "$newWeight"
+            }
+            weightValueLabel.text = name
+
+            // Update preview box live
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                previewBox.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, newWeight, false)
+            } else {
+                previewBox.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, if (newWeight >= 600) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+            }
+            previewBox.paint.isFakeBoldText = (newWeight >= 600)
+            previewBox.invalidate()
+
+            // Update button styles
+            for (btn in weightButtons) {
+                val btnWeight = btn.tag as? Int ?: 400
+                val isSelected = btnWeight == newWeight
+                (btn.background as? GradientDrawable)?.setColor(if (isSelected) 0xFF0284C7.toInt() else 0xFF334155.toInt())
+            }
+        }
+
+        val weightOptions = listOf(
+            400 to "Regular",
+            500 to "Medium",
+            600 to "SemiBold",
+            700 to "Bold (عريض)",
+            800 to "ExtraBold",
+            900 to "Black (ثقيل)"
+        )
+
+        for ((wVal, wLabel) in weightOptions) {
+            val btn = Button(context).apply {
+                text = wLabel
+                tag = wVal
+                textSize = 10f
+                setTextColor(Color.WHITE)
+                val padB = (4 * density).roundToInt()
+                setPadding(padB, padB, padB, padB)
+                background = GradientDrawable().apply {
+                    setColor(if (wVal == selectedFontWeight) 0xFF0284C7.toInt() else 0xFF334155.toInt())
+                    cornerRadius = 8f * density
+                }
+                val lpBtn = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    (30 * density).roundToInt()
+                ).apply {
+                    marginEnd = (4 * density).roundToInt()
+                }
+                layoutParams = lpBtn
+                setOnClickListener {
+                    updateWeightUI(wVal)
+                }
+            }
+            weightButtons.add(btn)
+            weightRow.addView(btn)
+        }
+        weightScroll.addView(weightRow)
+        card.addView(weightScroll)
+
+        // Text Width Control (Slider & Presets)
+        val widthHeader = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, (6 * density).roundToInt(), 0, (2 * density).roundToInt())
+        }
         val widthLabel = TextView(context).apply {
-            text = "TEXT WIDTH / SCALE"
+            text = "TEXT WIDTH / عرض النص"
             textSize = 11f
             setTextColor(0xFF38BDF8.toInt())
             paint.isFakeBoldText = true
@@ -490,7 +623,7 @@ class InspectionOverlayView(
         val widthPresetRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, (2 * density).roundToInt(), 0, (8 * density).roundToInt())
+            setPadding(0, (2 * density).roundToInt(), 0, (6 * density).roundToInt())
         }
         val presets = listOf(0.8f to "80%", 1.0f to "100%", 1.2f to "120%", 1.5f to "150%")
         for ((scale, text) in presets) {
@@ -523,7 +656,7 @@ class InspectionOverlayView(
         val colorRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, (8 * density).roundToInt(), 0, (8 * density).roundToInt())
+            setPadding(0, (6 * density).roundToInt(), 0, (6 * density).roundToInt())
         }
         val colorInfo = TextView(context).apply {
             text = "Colors: Sampled auto-fill"
@@ -557,7 +690,7 @@ class InspectionOverlayView(
         val buttonRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
-            setPadding(0, (12 * density).roundToInt(), 0, 0)
+            setPadding(0, (10 * density).roundToInt(), 0, 0)
         }
 
         val cancelBtn = Button(context).apply {
@@ -593,14 +726,15 @@ class InspectionOverlayView(
                         textColor = selectedTextColor,
                         backgroundColor = selectedBgColor,
                         textSizeSp = targetTextSize,
-                        isBold = item.isBold,
+                        isBold = selectedFontWeight >= 600,
                         isItalic = item.isItalic,
                         matchMode = selectedMatchMode,
                         boundsLeft = item.bounds.left,
                         boundsTop = item.bounds.top,
                         boundsRight = item.bounds.right,
                         boundsBottom = item.bounds.bottom,
-                        widthScale = selectedWidthScale
+                        widthScale = selectedWidthScale,
+                        fontWeight = selectedFontWeight
                     )
                     onRuleConfirmed(rule)
                     dismissSelf()
